@@ -19,17 +19,20 @@ ios/*.xcworkspace
 ios/*.xcuserstate
 **/.xcode.env.local
 
-# Android
-android/gradle.properties
-android/local.properties
-android/key.properties
-*.jksgit init
-*.keystore
+# Android build artifacts
 android/app/build/
 android/build/
+android/.cxx/
+android/.gradle/
+*.keystore
+*.jks
 *.apk
+*.aar
 *.so
 
+# C++ / CMake temporary files
+.externalNativeBuild/
+IPCH/
 # IDE
 .idea
 *.iml
@@ -50,3 +53,8 @@ android/build/
 
 # Env
 .env
+
+# Ruby / Bundler
+.bundle/
+vendor/bundle/
+

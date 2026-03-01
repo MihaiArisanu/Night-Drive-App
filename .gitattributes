@@ -1,0 +1,12 @@
+# CMake files
+*.cmake linguist-vendored
+CMakeLists.txt linguist-vendored
+
+# node_modules files
+node_modules/* linguist-vendored
+
+# Build folders
+android/.cxx/* linguist-vendored
+android/app/build/* linguist-vendored
+ios/build/* linguist-vendored
+

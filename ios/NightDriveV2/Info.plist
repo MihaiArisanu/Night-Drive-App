@@ -8,6 +8,12 @@
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
 	<string>NightDriveV2</string>
+	<key>GoogleMapsApiKey</key>
+    <string>$(GOOGLE_API_GENERAL_KEY)</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Night Drive uses your GPS to show your position on the map and calculate your real-time cruising speed.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Night Drive requires background location to sync your cruise session with friends even when your screen is locked.</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
