@@ -10,3 +10,5 @@ android/.cxx/* linguist-vendored
 android/app/build/* linguist-vendored
 ios/build/* linguist-vendored
 
+android/** linguist-vendored
+ios/** linguist-vendored
