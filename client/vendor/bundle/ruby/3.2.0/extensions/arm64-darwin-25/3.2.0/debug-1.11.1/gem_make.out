@@ -1,0 +1,21 @@
+current directory: /Users/mihaiarisanu/NightDriveV2/vendor/bundle/ruby/3.2.0/gems/debug-1.11.1/ext/debug
+/Users/mihaiarisanu/.rbenv/versions/3.2.2/bin/ruby extconf.rb
+/Users/mihaiarisanu/.rbenv/versions/3.2.2/bin/ruby: warning: Ruby was built without YJIT support. You may need to install rustc to build Ruby with YJIT.
+creating Makefile
+
+current directory: /Users/mihaiarisanu/NightDriveV2/vendor/bundle/ruby/3.2.0/gems/debug-1.11.1/ext/debug
+make DESTDIR\= sitearchdir\=./.gem.20260222-44021-383mi0 sitelibdir\=./.gem.20260222-44021-383mi0 clean
+
+current directory: /Users/mihaiarisanu/NightDriveV2/vendor/bundle/ruby/3.2.0/gems/debug-1.11.1/ext/debug
+make DESTDIR\= sitearchdir\=./.gem.20260222-44021-383mi0 sitelibdir\=./.gem.20260222-44021-383mi0
+compiling debug.c
+compiling iseq_collector.c
+linking shared-object debug/debug.bundle
+ld: warning: ignoring duplicate libraries: '-lruby.3.2'
+
+current directory: /Users/mihaiarisanu/NightDriveV2/vendor/bundle/ruby/3.2.0/gems/debug-1.11.1/ext/debug
+make DESTDIR\= sitearchdir\=./.gem.20260222-44021-383mi0 sitelibdir\=./.gem.20260222-44021-383mi0 install
+/usr/bin/install -c -m 0755 debug.bundle ./.gem.20260222-44021-383mi0/debug
+
+current directory: /Users/mihaiarisanu/NightDriveV2/vendor/bundle/ruby/3.2.0/gems/debug-1.11.1/ext/debug
+make DESTDIR\= sitearchdir\=./.gem.20260222-44021-383mi0 sitelibdir\=./.gem.20260222-44021-383mi0 clean

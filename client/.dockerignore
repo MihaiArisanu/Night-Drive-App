@@ -1,0 +1,10 @@
+node_modules
+android
+ios
+.gradle
+build
+dist
+.env
+.git
+.gitignore
+.DS_Store
