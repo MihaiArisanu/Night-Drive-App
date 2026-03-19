@@ -1,36 +1,24 @@
-# Night Drive 🚘
+# 📱 NightDrive Mobile Client
 
-**Night Drive** is a **native navigation and social platform** for car enthusiasts, especially “midnight drivers.” Unlike apps like Waze or Google Maps, Night Drive prioritizes **driving enjoyment and quality** over just the fastest routes.
+This is the frontend of the NightDrive ecosystem. A cross-platform mobile application designed for high performance and a premium "dark mode" user experience.
 
----
+## 🛠️ Frontend Tech Stack
 
-## 🚀 Concept Overview
+* **Framework:** [React Native](https://reactnative.dev/) (v0.7x)
+* **Language:** TypeScript
+* **Maps:** [React Native Maps](https://github.com/react-native-maps/react-native-maps) with Google Maps Provider.
+* **Icons:** Lucide-React-Native.
+* **State & Logic:** Custom Hooks for modularity (`useCurrentUser`, `useFriendRequests`, `useDeleteAccount`).
 
-Night Drive helps users:
+## 🔑 Key Features
+* **Interactive Map:** Custom midnight-themed styling with real-time GPS tracking.
+* **Reporting System:** Long-press gesture to report traffic events (Police, Potholes, Accidents).
+* **Profile Management:** Secure account deletion and profile editing.
+* **Social Integration:** Add drivers by unique TAGs and manage friend requests.
 
-- 🚗 **Find long, straight, low-traffic roads** for cruising
-- 👥 **Social cruising:** join friends, share routes, and voice chat
-- 🧠 **ML-guided “free cruising” mode** for personalized routes
-- 📱 **Full Apple CarPlay & Android Auto integration**
-- 🌙 **OLED-friendly night mode UI** for smooth nighttime driving
+## 🛠️ Development
 
----
-
-## 🧱 Technical Stack
-
-### Frontend (Native)
-- **iOS:** Swift + SwiftUI + Google Maps SDK
-- **Android:** Kotlin + Jetpack Compose + Google Maps SDK
-
-### Backend
-- **Go:** WebSockets, session management, broadcasting
-- **Redis:** Real-time ride room states & geofencing
-- **PostgreSQL + PostGIS:** Geospatial queries & route storage
-
-### ML Microservice
-- **Python (FastAPI):** Learns preferred routes & scores roads for “Enjoy” mode
-
-### Mapping / Routing
-- **Google Maps SDK (native):** Custom night mode with JSON styling
-- **EV stations overlay:** via Google Places API
-- **Routing:** via Google Directions API
+1. Install dependencies: `npm install`
+2. Install iOS pods (macOS only): `cd ios && pod install && cd ..`
+3. Start Metro Bundler: `npx react-native start`
+4. Run on device: `npx react-native run-android` or `npx react-native run-ios`

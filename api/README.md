@@ -1,31 +1,22 @@
 # 🏎️ NightDrive Backend API
 
-The core engine powering **NightDrive**, a community-driven navigation and traffic hazard reporting application (Waze-style). Built with performance and spatial accuracy in mind, this RESTful API handles real-time geographic data, secure user authentication, and community-based event validation.
+The core engine powering **NightDrive**. A RESTful API built with Go, optimized for handling real-time geographic data and secure community interactions.
 
 ## ✨ Features
 
-* **Spatial Awareness (PostGIS):** Uses advanced geographic querying (`ST_DWithin`) to fetch nearby traffic events (police, accidents, hazards) based on the user's current GPS coordinates.
-* **Secure Authentication:** User passwords are irreversibly hashed using `bcrypt`, and sessions are managed via short-lived JSON Web Tokens (JWT).
-* **Community Validation Engine:** Implements an upvote/downvote system. Traffic events that receive too many downvotes are automatically purged from the database to keep the map clean and accurate.
-* **Structured & Scalable:** Follows standard Go project layout with a clear separation of concerns (Handlers, Models, DB operations, Middlewares).
+* **Spatial Awareness (PostGIS):** Advanced geographic querying (`ST_DWithin`) to fetch hazards based on real-time user coordinates.
+* **Secure Authentication:** Password hashing via `bcrypt` and session management via JWT.
+* **Validation Engine:** Community-based upvote/downvote system to filter out inaccurate traffic reports.
+* **Scalable Layout:** Clean separation of Handlers, Models, and DB operations.
 
 ## 🛠️ Tech Stack
 
 * **Language:** Go (Golang)
-* **Database:** PostgreSQL
-* **Spatial Extension:** PostGIS
-* **Infrastructure:** Docker (for isolated database deployment)
-* **Security:** JWT (golang-jwt), Bcrypt (x/crypto)
+* **Database:** PostgreSQL + PostGIS extension.
+* **Security:** JWT (golang-jwt), Bcrypt.
+* **Deployment:** Dockerized for consistent environments.
 
-## 📂 Project Structure
-
-```text
-├── cmd/
-│   └── api/
-│       └── main.go           # Application entry point & router setup
-├── internal/
-│   ├── db/                   # Database connection and queries (users, events)
-│   ├── handlers/             # HTTP route handlers and JWT middleware
-│   └── models/               # Go structs defining Request/Response payloads
-├── go.mod                    # Go module dependencies
-└── README.md
+## 📂 Internal Structure
+* `/cmd/api`: Application entry point.
+* `/internal/db`: Spatial queries and user management.
+* `/internal/handlers`: HTTP logic and Auth middlewares.

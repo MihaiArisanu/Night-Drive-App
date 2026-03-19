@@ -9,3 +9,9 @@ ios/build/* linguist-vendored
 
 android/** linguist-vendored
 ios/** linguist-vendored
+
+client/android/** linguist-vendored
+client/ios/** linguist-vendored
+*.cmake linguist-generated
+*.cpp linguist-generated
+*.h linguist-generated

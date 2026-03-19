@@ -37,3 +37,14 @@ client/android/local.properties
 
 
 **/fastlane/test_output
+
+
+**/android/.cxx/
+**/android/.externalNativeBuild/
+**/android/app/.cxx/
+**/*.cmake
+**/CMakeCache.txt
+**/CMakeFiles/
+**/Makefile
+**/cmake_install.cmake
+**/app/build/intermediates/
