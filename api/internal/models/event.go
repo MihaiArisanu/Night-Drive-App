@@ -21,6 +21,7 @@ type Event struct {
 	Downvotes   int       `json:"downvotes"`
 	CreatedAt   time.Time `json:"created_at"`
 	ExpiresAt   time.Time `json:"expires_at"`
+	Distance    float64   `json:"distance,omitempty"`
 }
 
 type EventVoteRequest struct {

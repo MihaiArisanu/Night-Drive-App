@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { View, Text, TouchableOpacity, Keyboard, Platform, PermissionsAndroid, StyleSheet } from "react-native";
+import { View, Text, TouchableOpacity, Keyboard, Platform, PermissionsAndroid, StyleSheet, Modal } from "react-native";
 import MapView, { PROVIDER_GOOGLE, Marker } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Search, X, MapPin, Navigation } from "lucide-react-native";
@@ -7,19 +7,31 @@ import { GooglePlacesAutocomplete } from "react-native-google-places-autocomplet
 import Geolocation from "react-native-geolocation-service";
 import MapViewDirections from 'react-native-maps-directions';
 import { useKeepAwake } from '@sayem314/react-native-keep-awake';
+import AudioRecorderPlayer from 'react-native-audio-recorder-player';
 
 import { AddEventButton } from "../components/AddEventButton";
 import { AddEventModal } from "../components/AddEventModal";
 import { IconButton } from "../components/IconButton";
 import { SpeedBox } from "../components/SpeedBox";
 import { TopBar } from "../components/TopBar";
+import { RideInviteSheet } from '../components/RideInviteSheet';
 
 import { GOOGLE_API_GENERAL_KEY } from '@env';
 import { useLocation } from '../hooks/useLocation';
 import { useDeadReckoning } from '../hooks/useDeadReckoning';
 import { useRerouting } from '../hooks/useRerouting';
+import { useReporting } from '../hooks/useReporting';
+import { useNearbyEvents } from '../hooks/useNearbyEvents';
 
 const GOOGLE_API_KEY = GOOGLE_API_GENERAL_KEY;
+
+const audioRecorderPlayer = AudioRecorderPlayer;
+
+interface InviteData {
+  friendName: string;
+  distance: string;
+  eta: string;
+}
 
 export default function MainScreen() {
   const mapRef = useRef<MapView>(null);
@@ -33,6 +45,18 @@ export default function MainScreen() {
   const [routeCoordinates, setRouteCoordinates] = useState<{ latitude: number, longitude: number }[]>([]);
   const [isNavigating, setIsNavigating] = useState(false);
   const autoStartTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [showRideInvite, setShowRideInvite] = useState(false);
+  // NOU: State dinamic pentru informațiile din slider
+  const [inviteData, setInviteData] = useState<InviteData | null>(null);
+
+  const { submitReport, isSubmitting } = useReporting();
+  const { events, refetchEvents } = useNearbyEvents(activeCoords.latitude || 44.4268, activeCoords.longitude || 26.1025);
+  const [isReportModalVisible, setIsReportModalVisible] = useState(false);
+  const [selectedLocation, setSelectedLocation] = useState<{ latitude: number, longitude: number } | null>(null);
+
+  const [isRecording, setIsRecording] = useState(false);
+  const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
 
   const {
     isRerouting,
@@ -50,6 +74,30 @@ export default function MainScreen() {
     latitudeDelta: 0.002,
     longitudeDelta: 0.002,
   });
+
+  const handleAcceptRide = () => {
+    console.log(`Ride Accepted with ${inviteData?.friendName}! Merging routes...`);
+    setActiveGroupId("group_spontan_123");
+    setShowRideInvite(false);
+    setInviteData(null); // Curățăm datele după acceptare
+  };
+
+  const handleDeclineRide = () => {
+    console.log("Ride Declined.");
+    setShowRideInvite(false);
+    setInviteData(null);
+  };
+
+  // Funcție temporară pentru a simula primirea unei invitații
+  // Vom șterge asta când legăm backend-ul
+  const simulateIncomingInvite = () => {
+    setInviteData({
+      friendName: "Andrei",
+      distance: "2.5 km",
+      eta: "3 min"
+    });
+    setShowRideInvite(true);
+  };
 
   const requestLocationPermission = async () => {
     if (Platform.OS === 'ios') return true;
@@ -115,6 +163,58 @@ export default function MainScreen() {
     setRouteCoordinates([]);
     setIsNavigating(false);
     if (autoStartTimer.current) clearTimeout(autoStartTimer.current);
+  };
+
+  const recenterMap = () => {
+    if (activeCoords.latitude !== 0 && mapRef.current) {
+      mapRef.current.animateCamera({
+        center: activeCoords,
+        heading: heading,
+        pitch: 60,
+        zoom: 20.5,
+      }, { duration: 1000 });
+    }
+  };
+
+  const handleMapLongPress = (event: any) => {
+    const { coordinate } = event.nativeEvent;
+    setSelectedLocation(coordinate);
+    setIsReportModalVisible(true);
+  };
+
+  const handleSendReport = async (type: 'police' | 'pothole' | 'accident') => {
+    if (!selectedLocation) return;
+    const result = await submitReport(type, selectedLocation.latitude, selectedLocation.longitude);
+    if (result.success) {
+      setIsReportModalVisible(false);
+      refetchEvents();
+    }
+  };
+
+  const startRecording = async () => {
+    if (Platform.OS === 'android') {
+      const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+      if (granted !== PermissionsAndroid.RESULTS.GRANTED) return;
+    }
+    setIsRecording(true);
+    try {
+      await audioRecorderPlayer.startRecorder();
+    } catch (error) {
+      console.error('Failed to start recording:', error);
+      setIsRecording(false);
+    }
+  };
+
+  const stopRecording = async () => {
+    if (!isRecording) return;
+    setIsRecording(false);
+    try {
+      const resultUri = await audioRecorderPlayer.stopRecorder();
+      audioRecorderPlayer.removeRecordBackListener();
+      console.log('Sending audio to server:', resultUri);
+    } catch (error) {
+      console.error('Failed to stop recording:', error);
+    }
   };
 
   return (
@@ -184,6 +284,7 @@ export default function MainScreen() {
             showsCompass={false}
             loadingEnabled={true}
             mapPadding={{ top: 0, right: 0, bottom: 120, left: 0 }}
+            onLongPress={handleMapLongPress}
           >
             {activeCoords.latitude !== 0 && (
               <Marker
@@ -197,6 +298,20 @@ export default function MainScreen() {
                 </View>
               </Marker>
             )}
+
+            {events?.map((event) => (
+              <Marker
+                key={event.id}
+                coordinate={{ latitude: event.latitude, longitude: event.longitude }}
+                tracksViewChanges={false}
+              >
+                <View style={styles.eventMarkerContainer}>
+                  <Text style={styles.eventMarkerEmoji}>
+                    {event.type === 'police' ? '🚔' : event.type === 'pothole' ? '⚠️' : '💥'}
+                  </Text>
+                </View>
+              </Marker>
+            ))}
 
             {destination && routeOrigin && (
               <MapViewDirections
@@ -225,6 +340,32 @@ export default function MainScreen() {
             )}
           </MapView>
         )}
+
+        {!isSearching && (
+          <TouchableOpacity style={styles.recenterBtn} onPress={recenterMap}>
+            <Text style={styles.recenterIcon}>📍</Text>
+          </TouchableOpacity>
+        )}
+
+        {!isSearching && activeGroupId && (
+          <View style={styles.pttContainer}>
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPressIn={startRecording}
+              onPressOut={stopRecording}
+              style={[
+                styles.pttBtn,
+                isRecording ? styles.pttBtnActive : styles.pttBtnIdle
+              ]}
+            >
+              <Text style={styles.pttIcon}>{isRecording ? '🎙️' : '🎤'}</Text>
+            </TouchableOpacity>
+            {isRecording && (
+              <Text style={styles.pttText}>Transmitting...</Text>
+            )}
+          </View>
+        )}
+
       </View>
 
       {!isSearching && (
@@ -232,7 +373,8 @@ export default function MainScreen() {
           <View style={styles.contentContainer}>
             <IconButton icon={<Search color="white" size={28} />} onPress={() => setIsSearching(true)} />
             <View style={styles.centerButtonSpacer}>
-              <AddEventButton onPress={() => setModalVisible(true)} />
+              {/* NOU: Aici apelăm simularea pentru invitație la simpla apăsare a butonului mov din mijloc (doar pentru test) */}
+              <AddEventButton onPress={simulateIncomingInvite} />
             </View>
             <TouchableOpacity onLongPress={cancelNavigation} activeOpacity={0.8}>
               <SpeedBox speed={speed} limit={80} />
@@ -242,6 +384,64 @@ export default function MainScreen() {
       )}
 
       <AddEventModal isVisible={isModalVisible} onClose={() => setModalVisible(false)} />
+
+      {/* Modalul de Raportare Long-Press */}
+      <Modal
+        visible={isReportModalVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setIsReportModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.reportContent}>
+            <Text style={styles.reportTitle}>REPORT EVENT</Text>
+
+            <View style={styles.reportButtonsContainer}>
+              <TouchableOpacity
+                style={[styles.reportBtn, { borderColor: '#3B82F6' }]}
+                onPress={() => handleSendReport('police')}
+                disabled={isSubmitting}
+              >
+                <Text style={{ fontSize: 30 }}>🚔</Text>
+                <Text style={styles.reportBtnText}>POLICE</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.reportBtn, { borderColor: '#F59E0B' }]}
+                onPress={() => handleSendReport('pothole')}
+                disabled={isSubmitting}
+              >
+                <Text style={{ fontSize: 30 }}>⚠️</Text>
+                <Text style={styles.reportBtnText}>POTHOLE</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.reportBtn, { borderColor: '#EF4444' }]}
+                onPress={() => handleSendReport('accident')}
+                disabled={isSubmitting}
+              >
+                <Text style={{ fontSize: 30 }}>💥</Text>
+                <Text style={styles.reportBtnText}>ACCIDENT</Text>
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity style={styles.cancelBtn} onPress={() => setIsReportModalVisible(false)}>
+              <Text style={styles.cancelBtnText}>CANCEL</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* NOU: Componenta de Invitație așezată curat la nivelul Root-ului */}
+      <RideInviteSheet
+        isVisible={showRideInvite}
+        friendName={inviteData?.friendName || ""}
+        distance={inviteData?.distance || ""}
+        eta={inviteData?.eta || ""}
+        onAccept={handleAcceptRide}
+        onDecline={handleDeclineRide}
+      />
+
     </View>
   );
 }
@@ -265,7 +465,8 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 30,
     position: 'absolute',
     bottom: 0,
-    width: '100%'
+    width: '100%',
+    zIndex: 5, // Pentru a sta corect sub Slider-ul de Invitație (care are zIndex mai mare)
   },
   contentContainer: {
     flexDirection: "row",
@@ -281,6 +482,140 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.8,
     shadowRadius: 10,
     elevation: 10,
+  },
+
+  eventMarkerContainer: {
+    backgroundColor: 'rgba(17, 17, 17, 0.9)',
+    padding: 5,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#333',
+    shadowColor: '#A855F7',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 5,
+    elevation: 5,
+  },
+  eventMarkerEmoji: {
+    fontSize: 24,
+  },
+
+  recenterBtn: {
+    position: 'absolute',
+    bottom: 120,
+    right: 20,
+    width: 55,
+    height: 55,
+    backgroundColor: '#111',
+    borderRadius: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#333',
+    shadowColor: '#3B82F6',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 10,
+    elevation: 5,
+  },
+  recenterIcon: {
+    fontSize: 24,
+  },
+
+  pttContainer: {
+    position: 'absolute',
+    bottom: 110,
+    alignSelf: 'center',
+    alignItems: 'center',
+  },
+  pttBtn: {
+    width: 70,
+    height: 70,
+    borderRadius: 35,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 3,
+    elevation: 8,
+  },
+  pttBtnIdle: {
+    backgroundColor: '#1A1A1A',
+    borderColor: '#333',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 5,
+  },
+  pttBtnActive: {
+    backgroundColor: '#EF4444',
+    borderColor: '#F87171',
+    shadowColor: '#EF4444',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 1,
+    shadowRadius: 15,
+  },
+  pttIcon: {
+    fontSize: 28,
+  },
+  pttText: {
+    color: '#EF4444',
+    fontWeight: 'bold',
+    marginTop: 5,
+    textShadowColor: 'rgba(0, 0, 0, 0.75)',
+    textShadowOffset: { width: -1, height: 1 },
+    textShadowRadius: 10,
+  },
+
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    justifyContent: 'flex-end',
+  },
+  reportContent: {
+    backgroundColor: '#111',
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    padding: 25,
+    borderWidth: 1,
+    borderColor: '#333',
+    alignItems: 'center',
+  },
+  reportTitle: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: '900',
+    letterSpacing: 2,
+    marginBottom: 25,
+  },
+  reportButtonsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginBottom: 30,
+  },
+  reportBtn: {
+    width: '30%',
+    aspectRatio: 1,
+    backgroundColor: '#050505',
+    borderRadius: 20,
+    borderWidth: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 10,
+  },
+  reportBtnText: {
+    color: 'white',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  cancelBtn: {
+    paddingVertical: 15,
+    width: '100%',
+    alignItems: 'center',
+  },
+  cancelBtnText: {
+    color: '#666',
+    fontWeight: 'bold',
+    letterSpacing: 1,
   },
 });
 

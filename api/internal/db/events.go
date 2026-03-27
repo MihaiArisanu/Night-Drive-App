@@ -5,18 +5,34 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/MihaiArisanu/nightdrive-backend/internal/models"
 )
 
 func CreateEvent(dbConn *sql.DB, req *models.EventCreateRequest) (*models.Event, error) {
+	var ttl time.Duration
+	switch req.EventType {
+	case "police", "radar":
+		ttl = 2 * time.Hour
+	case "accident", "hazard":
+		ttl = 4 * time.Hour
+	case "pothole", "roadwork":
+		ttl = 24 * time.Hour
+	default:
+		ttl = 6 * time.Hour
+	}
+
+	expiresAt := time.Now().Add(ttl)
+
 	query := `
-		INSERT INTO events (user_id, event_type, location, description)
+		INSERT INTO events (user_id, event_type, location, description, expires_at)
 		VALUES (
 			$1, 
 			$2, 
 			ST_SetSRID(ST_MakePoint($3, $4), 4326)::geography, 
-			$5
+			$5,
+			$6
 		)
 		RETURNING id, created_at, expires_at
 	`
@@ -39,42 +55,56 @@ func CreateEvent(dbConn *sql.DB, req *models.EventCreateRequest) (*models.Event,
 		req.Longitude,
 		req.Latitude,
 		req.Description,
+		expiresAt,
 	).Scan(&event.ID, &event.CreatedAt, &event.ExpiresAt)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to insert event into database: %w", err)
 	}
 
-	log.Printf("New event created: [%s] at Lat: %f, Lng: %f", event.EventType, event.Latitude, event.Longitude)
+	log.Printf("New event created: [%s] at Lat: %f, Lng: %f (Expiră în: %v)", event.EventType, event.Latitude, event.Longitude, ttl)
 	return event, nil
 }
 
-func GetNearbyEvents(dbConn *sql.DB, lat, lng float64, radiusInMeters float64) ([]models.Event, error) {
+func GetNearbyEvents(dbConn *sql.DB, lat, lng, radius float64, limit, offset int) ([]models.Event, error) {
 	query := `
-		SELECT id, user_id, event_type, 
-		       ST_Y(location::geometry) as latitude, 
-		       ST_X(location::geometry) as longitude, 
-		       description, upvotes, downvotes, created_at, expires_at
+		SELECT 
+			id, user_id, event_type, 
+			ST_Y(location::geometry) as lat, 
+			ST_X(location::geometry) as lng, 
+			description, upvotes, downvotes, created_at, expires_at,
+			ST_Distance(location, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography) as distance
 		FROM events
-		WHERE ST_DWithin(location, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, $3)
-		  AND expires_at > CURRENT_TIMESTAMP
+		WHERE ST_DWithin(
+			location, 
+			ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, 
+			$3
+		)
+		AND expires_at > NOW()
+		ORDER BY location <-> ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography
+		LIMIT $4 OFFSET $5
 	`
 
-	rows, err := dbConn.QueryContext(context.Background(), query, lng, lat, radiusInMeters)
+	rows, err := dbConn.Query(query, lng, lat, radius, limit, offset)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to query nearby events: %v", err)
 	}
 	defer rows.Close()
 
 	events := []models.Event{}
 	for rows.Next() {
-		var e models.Event
-		err := rows.Scan(&e.ID, &e.UserID, &e.EventType, &e.Latitude, &e.Longitude,
-			&e.Description, &e.Upvotes, &e.Downvotes, &e.CreatedAt, &e.ExpiresAt)
+		var ev models.Event
+		err := rows.Scan(
+			&ev.ID, &ev.UserID, &ev.EventType,
+			&ev.Latitude, &ev.Longitude,
+			&ev.Description, &ev.Upvotes, &ev.Downvotes,
+			&ev.CreatedAt, &ev.ExpiresAt,
+			&ev.Distance,
+		)
 		if err != nil {
-			return nil, err
+			continue
 		}
-		events = append(events, e)
+		events = append(events, ev)
 	}
 
 	return events, nil
@@ -83,11 +113,12 @@ func GetNearbyEvents(dbConn *sql.DB, lat, lng float64, radiusInMeters float64) (
 func VoteEvent(dbConn *sql.DB, eventID string, voteType string) error {
 	var query string
 
-	if voteType == "upvote" {
+	switch voteType {
+	case "upvote":
 		query = `UPDATE events SET upvotes = upvotes + 1 WHERE id = $1`
-	} else if voteType == "downvote" {
+	case "downvote":
 		query = `UPDATE events SET downvotes = downvotes + 1 WHERE id = $1`
-	} else {
+	default:
 		return fmt.Errorf("invalid vote type")
 	}
 
@@ -105,10 +136,8 @@ func VoteEvent(dbConn *sql.DB, eventID string, voteType string) error {
 		return fmt.Errorf("event not found")
 	}
 
-	if voteType == "downvote" {
-		cleanupQuery := `DELETE FROM events WHERE id = $1 AND downvotes >= 3`
-		_, _ = dbConn.ExecContext(context.Background(), cleanupQuery, eventID)
-	}
+	cleanupQuery := `DELETE FROM events WHERE id = $1 AND (downvotes - upvotes) >= 3`
+	_, _ = dbConn.ExecContext(context.Background(), cleanupQuery, eventID)
 
 	return nil
 }

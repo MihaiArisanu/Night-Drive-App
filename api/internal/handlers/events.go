@@ -3,14 +3,16 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 
 	"github.com/MihaiArisanu/nightdrive-backend/internal/db"
 	"github.com/MihaiArisanu/nightdrive-backend/internal/models"
+	"github.com/MihaiArisanu/nightdrive-backend/internal/ws"
 )
 
-func CreateEventHandler(database *sql.DB) http.HandlerFunc {
+func CreateEventHandler(database *sql.DB, hub *ws.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -35,6 +37,18 @@ func CreateEventHandler(database *sql.DB) http.HandlerFunc {
 		if err != nil {
 			http.Error(w, "Failed to create event in database", http.StatusInternalServerError)
 			return
+		}
+
+		wsMessage := map[string]interface{}{
+			"type": "new_event",
+			"data": event,
+		}
+
+		wsBytes, err := json.Marshal(wsMessage)
+		if err == nil {
+			hub.Broadcast <- wsBytes
+		} else {
+			log.Printf("Failed to marshal websocket message: %v", err)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -70,7 +84,21 @@ func GetNearbyEventsHandler(database *sql.DB) http.HandlerFunc {
 			radius = 5000
 		}
 
-		events, err := db.GetNearbyEvents(database, lat, lng, radius)
+		limitStr := r.URL.Query().Get("limit")
+		pageStr := r.URL.Query().Get("page")
+
+		limit, _ := strconv.Atoi(limitStr)
+		if limit <= 0 || limit > 100 {
+			limit = 50
+		}
+
+		page, _ := strconv.Atoi(pageStr)
+		if page < 1 {
+			page = 1
+		}
+		offset := (page - 1) * limit
+
+		events, err := db.GetNearbyEvents(database, lat, lng, radius, limit, offset)
 		if err != nil {
 			http.Error(w, "Failed to fetch events", http.StatusInternalServerError)
 			return

@@ -32,6 +32,8 @@ func main() {
 	}
 	defer database.Close()
 
+	go db.StartCleanupWorker(database)
+
 	hub := ws.NewHub()
 	go hub.Run()
 
@@ -44,7 +46,7 @@ func main() {
 	mux.HandleFunc("/api/login", handlers.LoginHandler(database))
 	mux.HandleFunc("/api/events/nearby", handlers.GetNearbyEventsHandler(database))
 
-	mux.HandleFunc("/api/events", handlers.RequireAuth(handlers.CreateEventHandler(database)))
+	mux.HandleFunc("/api/events", handlers.RequireAuth(handlers.CreateEventHandler(database, hub)))
 	mux.HandleFunc("/api/events/vote", handlers.RequireAuth(handlers.VoteEventHandler(database)))
 
 	mux.HandleFunc("/api/ws", func(w http.ResponseWriter, r *http.Request) {
