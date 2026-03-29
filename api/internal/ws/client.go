@@ -16,9 +16,11 @@ const (
 )
 
 type Client struct {
-	Hub  *Hub
-	Conn *websocket.Conn
-	Send chan []byte
+	Hub     *Hub
+	Conn    *websocket.Conn
+	Send    chan []byte
+	UserID  string
+	GroupID string
 }
 
 type SyncMessage struct {
@@ -49,7 +51,6 @@ func (c *Client) ReadPump() {
 		var syncMsg SyncMessage
 		if err := json.Unmarshal(message, &syncMsg); err == nil && syncMsg.Type == "SYNC" {
 			log.Printf("Client resync requested at lat: %f, lng: %f since %s", syncMsg.Latitude, syncMsg.Longitude, syncMsg.LastSyncTimestamp)
-			// TODO: Aici vom apela baza de date PostGIS pentru a aduce radarele apărute după last_sync_timestamp și le vom trimite înapoi prin c.Send <- deltaData
 		}
 	}
 }

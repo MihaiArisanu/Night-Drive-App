@@ -12,8 +12,8 @@ services:
       - nightdrive-db-data:/var/lib/postgresql/data
     restart: unless-stopped
 
-  nightdrive-backend:
-    build: ./backend
+  nightdrive-api:
+    build: ./api
     container_name: nightdrive-backend
     environment:
       DB_USER: ${DB_USER}
@@ -24,21 +24,21 @@ services:
     ports:
       - "8080:8080"
     env_file:
-      - ./backend/.env
+      - ./api/.env
     depends_on:
       - db
     restart: unless-stopped
 
-  nightdrive-frontend:
-    build: ./frontend
+  nightdrive-client:
+    build: ./client
     container_name: nightdrive-frontend
     ports:
       - "8081:8081"
     volumes:
-      - ./frontend:/app
+      - ./client:/app
       - /app/node_modules
     env_file:
-      - ./frontend/.env
+      - ./client/.env
     restart: unless-stopped
     deploy:
       resources:

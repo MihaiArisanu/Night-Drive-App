@@ -1,28 +1,60 @@
-import React, { useState } from "react";
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, Image, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
+import React, { useState, useEffect } from "react";
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, Image, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { ArrowLeft, Camera, Mail, User } from "lucide-react-native";
 import { ActionButton } from "../components/ActionButton";
+import { useCurrentUser } from "../hooks/useCurrentUser";
+import { API_BASE_URL } from '@env';
 
 export default function EditProfileScreen({ navigation }: any) {
-    // Aici în mod normal ai prelua datele din backend / context
-    const [name, setName] = useState("ALEX");
-    const [email, setEmail] = useState("alex@nightdrive.com");
+    const { currentUser, refetchUser } = useCurrentUser();
+    const [name, setName] = useState("");
+    const [email, setEmail] = useState("");
     const [isSaving, setIsSaving] = useState(false);
 
-    const handleSave = () => {
+    useEffect(() => {
+        if (currentUser) {
+            setName(currentUser.name);
+            setEmail(currentUser.email);
+        }
+    }, [currentUser]);
+
+    const handleSave = async () => {
         setIsSaving(true);
-        // Simulăm un request către backend (ex: apiFetch('/users/me', { method: 'PUT', body: { name, email } }))
-        setTimeout(() => {
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/users/profile`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    name: name,
+                    email: email,
+                }),
+            });
+
+            if (response.ok) {
+                await refetchUser();
+                navigation.goBack();
+            }
+        } catch (error) {
+            console.error(error);
+        } finally {
             setIsSaving(false);
-            navigation.goBack(); // Ne întoarcem în meniu după salvare
-        }, 1000);
+        }
     };
 
     const handleUpdatePhoto = () => {
-        // Aici vom apela librăria de Image Picker pe viitor
-        console.log("Deschide galeria foto...");
+        console.log("Gallery");
     };
+
+    if (!currentUser) {
+        return (
+            <View style={[styles.container, { justifyContent: 'center' }]}>
+                <ActivityIndicator color="#A855F7" size="large" />
+            </View>
+        );
+    }
 
     return (
         <SafeAreaView style={styles.container}>
@@ -32,7 +64,7 @@ export default function EditProfileScreen({ navigation }: any) {
                     <Text style={styles.backText}>BACK</Text>
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>EDIT PROFILE</Text>
-                <View style={{ width: 60 }} /> {/* Spacer pentru centrare */}
+                <View style={{ width: 60 }} />
             </View>
 
             <KeyboardAvoidingView
@@ -48,7 +80,7 @@ export default function EditProfileScreen({ navigation }: any) {
                                 <Camera color="white" size={16} />
                             </View>
                         </TouchableOpacity>
-                        <Text style={styles.tagText}>TAG: #4Z9C</Text>
+                        <Text style={styles.tagText}>TAG: {currentUser.tag}</Text>
                         <Text style={styles.tagSubtitle}>(Tag-ul este unic și nu poate fi modificat)</Text>
                     </View>
 
@@ -95,25 +127,130 @@ export default function EditProfileScreen({ navigation }: any) {
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: "#000000" },
-    header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingVertical: 15 },
-    backButton: { flexDirection: "row", alignItems: "center", gap: 8 },
-    backText: { color: "white", fontSize: 16, fontWeight: "bold" },
-    headerTitle: { color: "white", fontSize: 18, fontWeight: "900", letterSpacing: 1 },
-    scrollContent: { padding: 20, alignItems: "center" },
+    container: {
+        flex: 1,
+        backgroundColor: "#000000",
+    },
 
-    photoSection: { alignItems: "center", marginBottom: 40, marginTop: 20 },
-    avatarContainer: { position: "relative", marginBottom: 15 },
-    avatar: { width: 120, height: 120, borderRadius: 60, borderWidth: 2, borderColor: "#A855F7", backgroundColor: "#111" },
-    cameraBadge: { position: "absolute", bottom: 0, right: 5, backgroundColor: "#A855F7", width: 36, height: 36, borderRadius: 18, justifyContent: "center", alignItems: "center", borderWidth: 3, borderColor: "#000" },
-    tagText: { color: "white", fontSize: 18, fontWeight: "900", letterSpacing: 2 },
-    tagSubtitle: { color: "#666", fontSize: 12, marginTop: 5 },
+    header: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingHorizontal: 20,
+        paddingVertical: 15,
+    },
 
-    formSection: { width: "100%", marginBottom: 30 },
-    inputLabel: { color: "#888", fontSize: 12, fontWeight: "bold", marginBottom: 8, marginLeft: 5, letterSpacing: 1 },
-    inputContainer: { flexDirection: "row", alignItems: "center", backgroundColor: "#0A0A0A", borderWidth: 1, borderColor: "#333", borderRadius: 12, paddingHorizontal: 15, marginBottom: 20 },
-    inputIcon: { marginRight: 15 },
-    input: { flex: 1, color: "white", fontSize: 16, paddingVertical: 15, fontWeight: "500" },
+    backButton: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
 
-    saveButton: { width: "100%", marginTop: 10, paddingVertical: 15 },
+    backText: {
+        color: "white",
+        fontSize: 16,
+        fontWeight: "bold",
+    },
+
+    headerTitle: {
+        color: "white",
+        fontSize: 18,
+        fontWeight: "900",
+        letterSpacing: 1,
+    },
+
+    scrollContent: {
+        padding: 20,
+        alignItems: "center",
+    },
+
+    photoSection: {
+        alignItems: "center",
+        marginBottom: 40,
+        marginTop: 20,
+    },
+
+    avatarContainer: {
+        position: "relative",
+        marginBottom: 15,
+    },
+
+    avatar: {
+        width: 120,
+        height: 120,
+        borderRadius: 60,
+        borderWidth: 2,
+        borderColor: "#A855F7",
+        backgroundColor: "#111",
+    },
+
+    cameraBadge: {
+        position: "absolute",
+        bottom: 0,
+        right: 5,
+        backgroundColor: "#A855F7",
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        justifyContent: "center",
+        alignItems: "center",
+        borderWidth: 3,
+        borderColor: "#000",
+    },
+
+    tagText: {
+        color: "white",
+        fontSize: 18,
+        fontWeight: "900",
+        letterSpacing: 2,
+    },
+
+    tagSubtitle: {
+        color: "#666",
+        fontSize: 12,
+        marginTop: 5,
+    },
+
+    formSection: {
+        width: "100%",
+        marginBottom: 30,
+    },
+
+    inputLabel: {
+        color: "#888",
+        fontSize: 12,
+        fontWeight: "bold",
+        marginBottom: 8,
+        marginLeft: 5,
+        letterSpacing: 1,
+    },
+
+    inputContainer: {
+        flexDirection: "row",
+        alignItems: "center",
+        backgroundColor: "#0A0A0A",
+        borderWidth: 1,
+        borderColor: "#333",
+        borderRadius: 12,
+        paddingHorizontal: 15,
+        marginBottom: 20,
+    },
+
+    inputIcon: {
+        marginRight: 15,
+    },
+
+    input: {
+        flex: 1,
+        color: "white",
+        fontSize: 16,
+        paddingVertical: 15,
+        fontWeight: "500",
+    },
+
+    saveButton: {
+        width: "100%",
+        marginTop: 10,
+        paddingVertical: 15,
+    },
 });

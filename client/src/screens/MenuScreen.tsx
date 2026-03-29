@@ -1,4 +1,4 @@
-import { ArrowLeft, Bookmark, MapPinOff, MessageSquare, Search, UserPlus, X } from "lucide-react-native";
+import { ArrowLeft, Bookmark, MapPinOff, MessageSquare, Search, UserPlus, X, Users, LogOut } from "lucide-react-native";
 import { Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, Modal, KeyboardAvoidingView, Platform, ActivityIndicator, Linking } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useState } from "react";
@@ -7,10 +7,16 @@ import { ActionButton } from "../components/ActionButton";
 import { useDeleteAccount } from "../hooks/useDeleteAccount";
 import { useCurrentUser } from "../hooks/useCurrentUser";
 import { useFriendRequests } from "../hooks/useFriendRequests";
+import { useSettings } from "../context/SettingsContext";
 
 export default function MenuScreen({ navigation }: any) {
   const { currentUser } = useCurrentUser();
   const { confirmAndDelete, isDeleting } = useDeleteAccount();
+  const {
+    activeGroupId, setActiveGroupId,
+    groupMembers, setGroupMembers,
+    pendingGroupInvites, setPendingGroupInvites
+  } = useSettings();
 
   const {
     pendingRequests,
@@ -30,6 +36,18 @@ export default function MenuScreen({ navigation }: any) {
     });
   };
 
+  const handleLeaveGroup = () => {
+    setActiveGroupId(null);
+    setGroupMembers([]);
+  };
+
+  const handleAcceptGroup = (inviteId: string, groupId: string) => {
+    setActiveGroupId(groupId);
+    setPendingGroupInvites(pendingGroupInvites.filter(inv => inv.id !== inviteId));
+  };
+
+  const hasMessages = pendingRequests.length > 0 || pendingGroupInvites.length > 0;
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -40,7 +58,6 @@ export default function MenuScreen({ navigation }: any) {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* SECȚIUNE PROFIL - CORECTATĂ */}
         <TouchableOpacity
           style={styles.profileSection}
           onPress={() => navigation.navigate("EditProfile")}
@@ -61,6 +78,32 @@ export default function MenuScreen({ navigation }: any) {
             <ActivityIndicator color="#A855F7" size="small" style={{ marginTop: 5 }} />
           )}
         </TouchableOpacity>
+
+        {activeGroupId && (
+          <View style={styles.groupSection}>
+            <View style={styles.groupHeader}>
+              <View style={styles.messageTitleRow}>
+                <Users color="#A855F7" size={20} />
+                <Text style={styles.messageTitle}>CURRENT GROUP</Text>
+              </View>
+              <TouchableOpacity onPress={handleLeaveGroup} style={styles.leaveButton}>
+                <LogOut color="#EF4444" size={20} />
+              </TouchableOpacity>
+            </View>
+
+            {groupMembers.map((member) => (
+              <View key={member.id} style={styles.memberCard}>
+                <Text style={styles.memberText}>{member.name} {member.tag}</Text>
+                <TouchableOpacity
+                  onPress={() => sendFriendRequest(member.tag, () => { })}
+                  style={styles.addMemberBtn}
+                >
+                  <UserPlus color="#A855F7" size={18} />
+                </TouchableOpacity>
+              </View>
+            ))}
+          </View>
+        )}
 
         <View style={styles.menuList}>
           <TouchableOpacity style={styles.menuItem} onPress={() => setIsAddFriendVisible(true)}>
@@ -85,19 +128,42 @@ export default function MenuScreen({ navigation }: any) {
           </TouchableOpacity>
         </View>
 
-        {pendingRequests.length > 0 && (
+        {hasMessages && (
           <View style={styles.messageSection}>
             <View style={styles.messageHeader}>
               <View style={styles.messageTitleRow}>
                 <MessageSquare color="white" size={20} />
                 <Text style={styles.messageTitle}>
-                  MESSAGES ({pendingRequests.length})
+                  MESSAGES ({pendingRequests.length + pendingGroupInvites.length})
                 </Text>
               </View>
               <TouchableOpacity onPress={clearAllRequests}>
                 <X color="#444" size={20} />
               </TouchableOpacity>
             </View>
+
+            {pendingGroupInvites.map((inv) => (
+              <View key={inv.id} style={[styles.notificationCard, { borderColor: '#10B981' }]}>
+                <Text style={styles.notificationText}>
+                  {inv.senderName} INVITED YOU TO A RIDE
+                </Text>
+                <View style={styles.notificationActions}>
+                  <ActionButton
+                    title="JOIN"
+                    style={[styles.notifBtn, { backgroundColor: '#10B981' }]}
+                    textStyle={{ fontSize: 12 }}
+                    onPress={() => handleAcceptGroup(inv.id, inv.groupId)}
+                  />
+                  <ActionButton
+                    title="REJECT"
+                    variant="outline"
+                    style={styles.notifBtn}
+                    textStyle={{ fontSize: 12 }}
+                    onPress={() => setPendingGroupInvites(pendingGroupInvites.filter(i => i.id !== inv.id))}
+                  />
+                </View>
+              </View>
+            ))}
 
             {pendingRequests.map((req) => (
               <View key={req.id} style={styles.notificationCard}>
@@ -252,11 +318,41 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
 
-  userRole: {
-    color: "#444",
-    fontSize: 12,
+  groupSection: {
+    paddingHorizontal: 20,
+    marginBottom: 20,
+  },
+
+  groupHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+
+  leaveButton: {
+    padding: 5,
+  },
+
+  memberCard: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: "#0A0A0A",
+    padding: 15,
+    borderRadius: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: "#1A1A1A",
+  },
+
+  memberText: {
+    color: "white",
     fontWeight: "bold",
-    marginTop: 5,
+  },
+
+  addMemberBtn: {
+    padding: 5,
   },
 
   menuList: {

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -94,5 +95,67 @@ func LoginHandler(database *sql.DB) http.HandlerFunc {
 			"token":   tokenString,
 			"user_id": user.ID,
 		})
+	}
+}
+
+func SearchUserHandler(database *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		tag := r.URL.Query().Get("tag")
+		if tag == "" || len(tag) < 4 {
+			http.Error(w, "Invalid or missing tag", http.StatusBadRequest)
+			return
+		}
+
+		user, err := db.SearchUserByTag(database, tag)
+		if err != nil {
+			http.Error(w, "Server error during search", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+
+		if user == nil {
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]string{"message": "No driver found with this tag"})
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(user)
+	}
+}
+
+func GetNearbyFriendsHandler(database *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		latStr := r.URL.Query().Get("lat")
+		lngStr := r.URL.Query().Get("lng")
+
+		lat, errLat := strconv.ParseFloat(latStr, 64)
+		lng, errLng := strconv.ParseFloat(lngStr, 64)
+
+		if errLat != nil || errLng != nil {
+			http.Error(w, "Invalid or missing lat/lng parameters", http.StatusBadRequest)
+			return
+		}
+
+		nearbyUsers, err := db.GetNearbyActiveUsers(database, lat, lng)
+		if err != nil {
+			http.Error(w, "Failed to fetch nearby friends", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(nearbyUsers)
 	}
 }

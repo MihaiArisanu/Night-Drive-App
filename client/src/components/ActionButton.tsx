@@ -1,12 +1,12 @@
 import React from 'react';
-import { StyleSheet, Text, TextStyle, TouchableOpacity, ViewStyle } from 'react-native';
+import { StyleSheet, Text, TextStyle, TouchableOpacity, ViewStyle, StyleProp } from 'react-native';
 
 interface ActionButtonProps {
     title: string;
     onPress?: () => void;
     variant?: 'primary' | 'outline' | 'danger';
-    style?: ViewStyle;
-    textStyle?: TextStyle;
+    style?: StyleProp<ViewStyle>;
+    textStyle?: StyleProp<TextStyle>;
     disabled?: boolean;
 }
 

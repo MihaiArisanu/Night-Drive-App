@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { View, Text, TouchableOpacity, Keyboard, Platform, PermissionsAndroid, StyleSheet, Modal } from "react-native";
 import MapView, { PROVIDER_GOOGLE, Marker } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Search, X, MapPin, Navigation } from "lucide-react-native";
+import { Search, X, MapPin, Navigation, Users } from "lucide-react-native";
 import { GooglePlacesAutocomplete } from "react-native-google-places-autocomplete";
 import Geolocation from "react-native-geolocation-service";
 import MapViewDirections from 'react-native-maps-directions';
@@ -16,12 +16,18 @@ import { SpeedBox } from "../components/SpeedBox";
 import { TopBar } from "../components/TopBar";
 import { RideInviteSheet } from '../components/RideInviteSheet';
 
-import { GOOGLE_API_GENERAL_KEY } from '@env';
+import { GOOGLE_API_GENERAL_KEY, API_BASE_URL } from '@env';
 import { useLocation } from '../hooks/useLocation';
 import { useDeadReckoning } from '../hooks/useDeadReckoning';
 import { useRerouting } from '../hooks/useRerouting';
 import { useReporting } from '../hooks/useReporting';
 import { useNearbyEvents } from '../hooks/useNearbyEvents';
+import { useNearbyFriends } from '../hooks/useNearbyFriends';
+import { useRideInvite } from '../hooks/useRideInvite';
+import { useWebSocket } from '../hooks/useWebSocket';
+import { useLocationBroadcaster } from '../hooks/useLocationBroadcaster';
+
+import { useSettings } from '../context/SettingsContext';
 
 const GOOGLE_API_KEY = GOOGLE_API_GENERAL_KEY;
 
@@ -31,6 +37,7 @@ interface InviteData {
   friendName: string;
   distance: string;
   eta: string;
+  groupId: string;
 }
 
 export default function MainScreen() {
@@ -47,16 +54,19 @@ export default function MainScreen() {
   const autoStartTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [showRideInvite, setShowRideInvite] = useState(false);
-  // NOU: State dinamic pentru informațiile din slider
   const [inviteData, setInviteData] = useState<InviteData | null>(null);
+
+  const { isDNDActive, userId, userName, activeGroupId, groupDestination, rendezvousPoint, setActiveGroupId } = useSettings();
 
   const { submitReport, isSubmitting } = useReporting();
   const { events, refetchEvents } = useNearbyEvents(activeCoords.latitude || 44.4268, activeCoords.longitude || 26.1025);
+  const { friends } = useNearbyFriends(activeCoords.latitude, activeCoords.longitude, isDNDActive);
+  const { sendInvite } = useRideInvite();
+
   const [isReportModalVisible, setIsReportModalVisible] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState<{ latitude: number, longitude: number } | null>(null);
 
   const [isRecording, setIsRecording] = useState(false);
-  const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
 
   const {
     isRerouting,
@@ -75,28 +85,63 @@ export default function MainScreen() {
     longitudeDelta: 0.002,
   });
 
-  const handleAcceptRide = () => {
-    console.log(`Ride Accepted with ${inviteData?.friendName}! Merging routes...`);
-    setActiveGroupId("group_spontan_123");
-    setShowRideInvite(false);
-    setInviteData(null); // Curățăm datele după acceptare
+  const currentDestination = groupDestination || destination;
+  const currentWaypoints = rendezvousPoint && groupDestination ? [rendezvousPoint] : undefined;
+
+  const handleIncomingInvite = (data: InviteData) => {
+    if (isDNDActive) {
+      return;
+    }
+    setInviteData(data);
+    setShowRideInvite(true);
   };
 
-  const handleDeclineRide = () => {
-    console.log("Ride Declined.");
+  const handleIncomingVoice = async (data: { audioUrl: string; senderName: string }) => {
+    if (isDNDActive) return;
+    try {
+      await audioRecorderPlayer.startPlayer(data.audioUrl);
+      audioRecorderPlayer.addPlayBackListener((e) => {
+        if (e.currentPosition === e.duration) {
+          audioRecorderPlayer.stopPlayer();
+          audioRecorderPlayer.removePlayBackListener();
+        }
+      });
+    } catch (error) {
+    }
+  };
+
+  useWebSocket(userId, handleIncomingInvite, handleIncomingVoice);
+
+  useLocationBroadcaster(
+    userId,
+    activeCoords.latitude,
+    activeCoords.longitude,
+    heading,
+    speedMs,
+    isDNDActive
+  );
+
+  const handleAcceptRide = () => {
+    if (inviteData?.groupId) {
+      setActiveGroupId(inviteData.groupId);
+    }
     setShowRideInvite(false);
     setInviteData(null);
   };
 
-  // Funcție temporară pentru a simula primirea unei invitații
-  // Vom șterge asta când legăm backend-ul
-  const simulateIncomingInvite = () => {
-    setInviteData({
-      friendName: "Andrei",
-      distance: "2.5 km",
-      eta: "3 min"
-    });
-    setShowRideInvite(true);
+  const handleDeclineRide = () => {
+    setShowRideInvite(false);
+    setInviteData(null);
+  };
+
+  const handleFriendClick = async (friendId: string, friendName: string) => {
+    if (isDNDActive || !userId || !userName) {
+      return;
+    }
+
+    const result = await sendInvite(friendId, userName, activeCoords.latitude, activeCoords.longitude);
+    if (result.success) {
+    }
   };
 
   const requestLocationPermission = async () => {
@@ -104,10 +149,10 @@ export default function MainScreen() {
     try {
       const granted = await PermissionsAndroid.requestMultiple([
         PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        PermissionsAndroid.PERMISSIONS.RECORD_AUDIO
       ]);
       return granted['android.permission.ACCESS_FINE_LOCATION'] === PermissionsAndroid.RESULTS.GRANTED;
     } catch (err) {
-      console.warn("Permission Error:", err);
       return false;
     }
   };
@@ -125,7 +170,7 @@ export default function MainScreen() {
             mapRef.current.animateToRegion(newRegion, 1000);
           }
         },
-        (error) => console.log("Location Error:", error.code, error.message),
+        () => { },
         { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
       );
     });
@@ -134,12 +179,14 @@ export default function MainScreen() {
   useEffect(() => {
     return () => {
       if (autoStartTimer.current) clearTimeout(autoStartTimer.current);
+      audioRecorderPlayer.stopPlayer();
+      audioRecorderPlayer.removePlayBackListener();
     };
   }, []);
 
   useEffect(() => {
     if (activeCoords.latitude !== 0 && !isSearching && mapRef.current) {
-      if (destination && !isNavigating) return;
+      if (currentDestination && !isNavigating) return;
 
       const isDriving = speed > 5 || isSimulating;
 
@@ -150,7 +197,7 @@ export default function MainScreen() {
         zoom: isDriving || isNavigating ? 20.5 : 18.5,
       }, { duration: 1000 });
     }
-  }, [activeCoords, heading, speed, isSearching, destination, isNavigating, isSimulating]);
+  }, [activeCoords, heading, speed, isSearching, currentDestination, isNavigating, isSimulating]);
 
   const closeSearch = () => {
     setIsSearching(false);
@@ -200,7 +247,6 @@ export default function MainScreen() {
     try {
       await audioRecorderPlayer.startRecorder();
     } catch (error) {
-      console.error('Failed to start recording:', error);
       setIsRecording(false);
     }
   };
@@ -211,9 +257,27 @@ export default function MainScreen() {
     try {
       const resultUri = await audioRecorderPlayer.stopRecorder();
       audioRecorderPlayer.removeRecordBackListener();
-      console.log('Sending audio to server:', resultUri);
+
+      if (!activeGroupId || !userId) return;
+
+      const formData = new FormData();
+      formData.append('audio', {
+        uri: resultUri,
+        type: 'audio/mp4',
+        name: `voice_${userId}_${Date.now()}.mp4`,
+      } as any);
+      formData.append('groupId', activeGroupId);
+      formData.append('senderId', userId);
+      if (userName) formData.append('senderName', userName);
+
+      await fetch(`${API_BASE_URL}/api/groups/voice`, {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
     } catch (error) {
-      console.error('Failed to stop recording:', error);
     }
   };
 
@@ -299,6 +363,23 @@ export default function MainScreen() {
               </Marker>
             )}
 
+            {friends.map((friend) => (
+              <Marker
+                key={friend.id}
+                coordinate={{ latitude: friend.latitude, longitude: friend.longitude }}
+                anchor={{ x: 0.5, y: 0.5 }}
+                flat={true}
+                rotation={friend.heading}
+                tracksViewChanges={false}
+                onPress={() => handleFriendClick(friend.id, friend.name)}
+              >
+                <View style={styles.friendMarkerContainer}>
+                  <Navigation color="#10B981" size={30} fill="#10B981" />
+                  <Text style={styles.friendMarkerText}>{friend.name}</Text>
+                </View>
+              </Marker>
+            ))}
+
             {events?.map((event) => (
               <Marker
                 key={event.id}
@@ -313,14 +394,32 @@ export default function MainScreen() {
               </Marker>
             ))}
 
-            {destination && routeOrigin && (
+            {rendezvousPoint && (
+              <Marker coordinate={rendezvousPoint} anchor={{ x: 0.5, y: 0.5 }}>
+                <View style={styles.rendezvousMarker}>
+                  <Users color="#FFF" size={24} />
+                </View>
+              </Marker>
+            )}
+
+            {groupDestination && (
+              <Marker coordinate={groupDestination} anchor={{ x: 0.5, y: 1 }}>
+                <View style={styles.groupDestinationMarker}>
+                  <MapPin color="#FFF" size={28} />
+                </View>
+              </Marker>
+            )}
+
+            {currentDestination && routeOrigin && (
               <MapViewDirections
                 origin={routeOrigin}
-                destination={destination}
+                destination={currentDestination}
+                waypoints={currentWaypoints}
                 apikey={GOOGLE_API_KEY}
                 strokeWidth={8}
                 strokeColor="#8A2BE2"
                 optimizeWaypoints={true}
+                splitWaypoints={true}
                 onReady={(result) => {
                   setRouteCoordinates(result.coordinates);
                   finishRerouting();
@@ -332,8 +431,7 @@ export default function MainScreen() {
                     });
                   }
                 }}
-                onError={(errorMessage) => {
-                  console.log('Eroare la rutare: ', errorMessage);
+                onError={() => {
                   finishRerouting();
                 }}
               />
@@ -360,9 +458,6 @@ export default function MainScreen() {
             >
               <Text style={styles.pttIcon}>{isRecording ? '🎙️' : '🎤'}</Text>
             </TouchableOpacity>
-            {isRecording && (
-              <Text style={styles.pttText}>Transmitting...</Text>
-            )}
           </View>
         )}
 
@@ -373,8 +468,7 @@ export default function MainScreen() {
           <View style={styles.contentContainer}>
             <IconButton icon={<Search color="white" size={28} />} onPress={() => setIsSearching(true)} />
             <View style={styles.centerButtonSpacer}>
-              {/* NOU: Aici apelăm simularea pentru invitație la simpla apăsare a butonului mov din mijloc (doar pentru test) */}
-              <AddEventButton onPress={simulateIncomingInvite} />
+              <AddEventButton onPress={() => setModalVisible(true)} />
             </View>
             <TouchableOpacity onLongPress={cancelNavigation} activeOpacity={0.8}>
               <SpeedBox speed={speed} limit={80} />
@@ -385,7 +479,6 @@ export default function MainScreen() {
 
       <AddEventModal isVisible={isModalVisible} onClose={() => setModalVisible(false)} />
 
-      {/* Modalul de Raportare Long-Press */}
       <Modal
         visible={isReportModalVisible}
         transparent={true}
@@ -432,7 +525,6 @@ export default function MainScreen() {
         </View>
       </Modal>
 
-      {/* NOU: Componenta de Invitație așezată curat la nivelul Root-ului */}
       <RideInviteSheet
         isVisible={showRideInvite}
         friendName={inviteData?.friendName || ""}
@@ -466,7 +558,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 0,
     width: '100%',
-    zIndex: 5, // Pentru a sta corect sub Slider-ul de Invitație (care are zIndex mai mare)
+    zIndex: 5,
   },
   contentContainer: {
     flexDirection: "row",
@@ -483,7 +575,6 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 10,
   },
-
   eventMarkerContainer: {
     backgroundColor: 'rgba(17, 17, 17, 0.9)',
     padding: 5,
@@ -499,7 +590,50 @@ const styles = StyleSheet.create({
   eventMarkerEmoji: {
     fontSize: 24,
   },
-
+  friendMarkerContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: "#10B981",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  friendMarkerText: {
+    color: 'white',
+    fontSize: 10,
+    fontWeight: 'bold',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 4,
+    borderRadius: 4,
+    marginTop: 2,
+    position: 'absolute',
+    bottom: -15,
+  },
+  rendezvousMarker: {
+    backgroundColor: '#10B981',
+    padding: 8,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#000',
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 1,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  groupDestinationMarker: {
+    backgroundColor: '#8A2BE2',
+    padding: 8,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#000',
+    shadowColor: '#8A2BE2',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 1,
+    shadowRadius: 10,
+    elevation: 8,
+  },
   recenterBtn: {
     position: 'absolute',
     bottom: 120,
@@ -521,7 +655,6 @@ const styles = StyleSheet.create({
   recenterIcon: {
     fontSize: 24,
   },
-
   pttContainer: {
     position: 'absolute',
     bottom: 110,
@@ -556,15 +689,6 @@ const styles = StyleSheet.create({
   pttIcon: {
     fontSize: 28,
   },
-  pttText: {
-    color: '#EF4444',
-    fontWeight: 'bold',
-    marginTop: 5,
-    textShadowColor: 'rgba(0, 0, 0, 0.75)',
-    textShadowOffset: { width: -1, height: 1 },
-    textShadowRadius: 10,
-  },
-
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.85)',
