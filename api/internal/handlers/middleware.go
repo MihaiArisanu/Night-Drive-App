@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -51,6 +52,7 @@ func RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 		next.ServeHTTP(w, r.WithContext(ctx))
 	}
 }
+
 func LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -94,4 +96,30 @@ func CORSMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+var (
+	rateLimiterMu sync.Mutex
+	lastRequests  = make(map[string]time.Time)
+)
+
+func RateLimit(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := r.Context().Value(UserIDKey).(string)
+		if !ok {
+			userID = r.RemoteAddr
+		}
+
+		rateLimiterMu.Lock()
+		lastReq, exists := lastRequests[userID]
+		if exists && time.Since(lastReq) < 3*time.Second {
+			rateLimiterMu.Unlock()
+			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+			return
+		}
+		lastRequests[userID] = time.Now()
+		rateLimiterMu.Unlock()
+
+		next.ServeHTTP(w, r)
+	}
 }

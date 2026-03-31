@@ -7,7 +7,7 @@ import { ActionButton } from "../components/ActionButton";
 import { useDeleteAccount } from "../hooks/useDeleteAccount";
 import { useCurrentUser } from "../hooks/useCurrentUser";
 import { useFriendRequests } from "../hooks/useFriendRequests";
-import { useSettings } from "../context/SettingsContext";
+import { useSettingsStore } from '../store/useSettingsStore';
 
 export default function MenuScreen({ navigation }: any) {
   const { currentUser } = useCurrentUser();
@@ -16,7 +16,7 @@ export default function MenuScreen({ navigation }: any) {
     activeGroupId, setActiveGroupId,
     groupMembers, setGroupMembers,
     pendingGroupInvites, setPendingGroupInvites
-  } = useSettings();
+  } = useSettingsStore();
 
   const {
     pendingRequests,

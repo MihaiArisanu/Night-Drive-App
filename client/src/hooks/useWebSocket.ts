@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { API_BASE_URL } from '@env';
-import { useSettings } from '../context/SettingsContext';
+import { useSettingsStore } from '../store/useSettingsStore';
 
 interface InvitePayload {
     friendName: string;
@@ -20,17 +20,23 @@ interface VoicePayload {
 }
 
 export function useWebSocket(
-    userId: string | null,
+    token: string | null,
+    groupId: string | null,
     onInviteReceived: (data: InvitePayload) => void,
     onVoiceReceived: (data: VoicePayload) => void
 ) {
     const ws = useRef<WebSocket | null>(null);
-    const { setGroupDestination, setRendezvousPoint } = useSettings();
+    const { setGroupDestination, setRendezvousPoint } = useSettingsStore();
 
     useEffect(() => {
-        if (!userId) return;
+        if (!token) return;
 
-        const wsUrl = API_BASE_URL.replace('http', 'ws').replace('https', 'wss') + `/api/ws?userId=${userId}`;
+        let wsUrl = API_BASE_URL.replace('http', 'ws').replace('https', 'wss') + `/api/ws?token=${token}`;
+
+        if (groupId) {
+            wsUrl += `&groupId=${groupId}`;
+        }
+
         ws.current = new WebSocket(wsUrl);
 
         ws.current.onmessage = (event) => {
@@ -53,6 +59,7 @@ export function useWebSocket(
                     onVoiceReceived(message.payload);
                 }
             } catch (error) {
+                console.error('WebSocket JSON parsing error:', error);
             }
         };
 
@@ -61,7 +68,7 @@ export function useWebSocket(
                 ws.current.close();
             }
         };
-    }, [userId, onInviteReceived, onVoiceReceived, setGroupDestination, setRendezvousPoint]);
+    }, [token, groupId, onInviteReceived, onVoiceReceived, setGroupDestination, setRendezvousPoint]);
 
     return { ws: ws.current };
 }

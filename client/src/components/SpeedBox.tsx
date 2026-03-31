@@ -32,6 +32,14 @@ const styles = StyleSheet.create({
     borderColor: '#EF4444',
     backgroundColor: '#2D0000',
   },
-  speedValue: { color: 'white', fontSize: 28, fontWeight: '900' },
-  speedLabel: { color: 'white', fontSize: 10, fontWeight: 'bold' },
+  speedValue: {
+    color: 'white',
+    fontSize: 28,
+    fontWeight: '900'
+  },
+  speedLabel: {
+    color: 'white',
+    fontSize: 10,
+    fontWeight: 'bold'
+  },
 });

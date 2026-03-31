@@ -31,12 +31,34 @@ export default function WelcomeScreen({ navigation }: any) {
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#000' },
-    topHalf: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-    logo: { width: 120, height: 120, marginBottom: 15 },
-    appName: { color: '#8A2BE2', fontSize: 36, fontWeight: 'bold' },
-    tagline: { color: '#888', fontSize: 16, marginTop: 10 },
-    bottomHalf: { padding: 30, paddingBottom: 50 },
+    container: {
+        flex: 1,
+        backgroundColor: '#000'
+    },
+    topHalf: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center'
+    },
+    logo: {
+        width: 120,
+        height: 120,
+        marginBottom: 15
+    },
+    appName: {
+        color: '#8A2BE2',
+        fontSize: 36,
+        fontWeight: 'bold'
+    },
+    tagline: {
+        color: '#888',
+        fontSize: 16,
+        marginTop: 10
+    },
+    bottomHalf: {
+        padding: 30,
+        paddingBottom: 50
+    },
     loginButton: { backgroundColor: '#8A2BE2', padding: 18, borderRadius: 12, alignItems: 'center', marginBottom: 15 },
     loginText: { color: '#FFF', fontSize: 18, fontWeight: 'bold' },
     registerButton: { backgroundColor: 'transparent', padding: 18, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#8A2BE2' },

@@ -3,6 +3,7 @@ import { API_BASE_URL } from '@env';
 
 export function useLocationBroadcaster(
     userId: string | null,
+    token: string | null,
     latitude: number,
     longitude: number,
     heading: number,
@@ -12,7 +13,7 @@ export function useLocationBroadcaster(
     const lastBroadcastRef = useRef(0);
 
     useEffect(() => {
-        if (!userId || latitude === 0) return;
+        if (!userId || !token || latitude === 0) return;
 
         const now = Date.now();
         if (now - lastBroadcastRef.current < 5000) return;
@@ -32,9 +33,9 @@ export function useLocationBroadcaster(
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
             },
             body: JSON.stringify(payload),
-        }).catch(() => {
-        });
-    }, [userId, latitude, longitude, heading, speedMs, isDNDActive]);
+        }).catch(() => { });
+    }, [userId, token, latitude, longitude, heading, speedMs, isDNDActive]);
 }

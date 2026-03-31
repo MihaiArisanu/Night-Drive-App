@@ -35,6 +35,7 @@ func main() {
 	mux.HandleFunc("/api/events/vote", handlers.RequireAuth(handlers.VoteEventHandler(database)))
 	mux.HandleFunc("/api/friends/nearby", handlers.RequireAuth(handlers.GetNearbyFriendsHandler(database)))
 	mux.HandleFunc("/api/voice/upload", handlers.RequireAuth(handlers.UploadVoiceHandler(hub)))
+	mux.HandleFunc("/api/users/places", handlers.RequireAuth(handlers.PlacesHandler(database)))
 
 	mux.HandleFunc("/api/ws", func(w http.ResponseWriter, r *http.Request) {
 		handlers.ServeWS(hub, w, r)

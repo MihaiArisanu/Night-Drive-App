@@ -23,6 +23,8 @@ services:
       DB_PORT: 5432
     ports:
       - "8080:8080"
+    volumes:
+      - ./api/uploads:/app/uploads
     env_file:
       - ./api/.env
     depends_on:

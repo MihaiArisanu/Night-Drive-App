@@ -45,7 +45,21 @@ export default function SplashScreen({ navigation }: any) {
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
-    logo: { width: 150, height: 150, marginBottom: 20 },
-    appName: { color: '#8A2BE2', fontSize: 32, fontWeight: 'bold', letterSpacing: 2 },
+    container: {
+        flex: 1,
+        backgroundColor: '#000',
+        justifyContent: 'center',
+        alignItems: 'center'
+    },
+    logo: {
+        width: 150,
+        height: 150,
+        marginBottom: 20
+    },
+    appName: {
+        color: '#8A2BE2',
+        fontSize: 32,
+        fontWeight: 'bold',
+        letterSpacing: 2
+    },
 });

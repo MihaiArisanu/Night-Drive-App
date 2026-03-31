@@ -4,10 +4,13 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { ArrowLeft, Camera, Mail, User } from "lucide-react-native";
 import { ActionButton } from "../components/ActionButton";
 import { useCurrentUser } from "../hooks/useCurrentUser";
+import { useSettingsStore } from '../store/useSettingsStore';
 import { API_BASE_URL } from '@env';
 
 export default function EditProfileScreen({ navigation }: any) {
     const { currentUser, refetchUser } = useCurrentUser();
+    const { token } = useSettingsStore();
+
     const [name, setName] = useState("");
     const [email, setEmail] = useState("");
     const [isSaving, setIsSaving] = useState(false);
@@ -26,6 +29,7 @@ export default function EditProfileScreen({ navigation }: any) {
                 method: 'PATCH',
                 headers: {
                     'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
                 },
                 body: JSON.stringify({
                     name: name,

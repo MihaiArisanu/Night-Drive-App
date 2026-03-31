@@ -2,8 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { View, Text, TouchableOpacity, Keyboard, Platform, PermissionsAndroid, StyleSheet, Modal } from "react-native";
 import MapView, { PROVIDER_GOOGLE, Marker } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Search, X, MapPin, Navigation, Users } from "lucide-react-native";
-import { GooglePlacesAutocomplete } from "react-native-google-places-autocomplete";
+import { Search, MapPin, Navigation, Users } from "lucide-react-native";
 import Geolocation from "react-native-geolocation-service";
 import MapViewDirections from 'react-native-maps-directions';
 import { useKeepAwake } from '@sayem314/react-native-keep-awake';
@@ -15,6 +14,7 @@ import { IconButton } from "../components/IconButton";
 import { SpeedBox } from "../components/SpeedBox";
 import { TopBar } from "../components/TopBar";
 import { RideInviteSheet } from '../components/RideInviteSheet';
+import { SearchBar } from '../components/SearchBar';
 
 import { GOOGLE_API_GENERAL_KEY, API_BASE_URL } from '@env';
 import { useLocation } from '../hooks/useLocation';
@@ -27,7 +27,7 @@ import { useRideInvite } from '../hooks/useRideInvite';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useLocationBroadcaster } from '../hooks/useLocationBroadcaster';
 
-import { useSettings } from '../context/SettingsContext';
+import { useSettingsStore } from '../store/useSettingsStore';
 
 const GOOGLE_API_KEY = GOOGLE_API_GENERAL_KEY;
 
@@ -56,7 +56,7 @@ export default function MainScreen() {
   const [showRideInvite, setShowRideInvite] = useState(false);
   const [inviteData, setInviteData] = useState<InviteData | null>(null);
 
-  const { isDNDActive, userId, userName, activeGroupId, groupDestination, rendezvousPoint, setActiveGroupId } = useSettings();
+  const { isDNDActive, userId, userName, activeGroupId, groupDestination, rendezvousPoint, setActiveGroupId, token } = useSettingsStore();
 
   const { submitReport, isSubmitting } = useReporting();
   const { events, refetchEvents } = useNearbyEvents(activeCoords.latitude || 44.4268, activeCoords.longitude || 26.1025);
@@ -110,10 +110,11 @@ export default function MainScreen() {
     }
   };
 
-  useWebSocket(userId, handleIncomingInvite, handleIncomingVoice);
+  useWebSocket(token, activeGroupId, handleIncomingInvite, handleIncomingVoice);
 
   useLocationBroadcaster(
     userId,
+    token,
     activeCoords.latitude,
     activeCoords.longitude,
     heading,
@@ -275,6 +276,7 @@ export default function MainScreen() {
         body: formData,
         headers: {
           'Content-Type': 'multipart/form-data',
+          'Authorization': `Bearer ${token}`
         },
       });
     } catch (error) {
@@ -296,44 +298,20 @@ export default function MainScreen() {
       <View style={styles.mapContainer}>
         {isSearching ? (
           <View style={styles.searchContainer}>
-            <GooglePlacesAutocomplete
-              placeholder="Where do you want to go?"
-              onPress={(data, details = null) => {
-                if (details) {
-                  const destCoords = {
-                    latitude: details.geometry.location.lat,
-                    longitude: details.geometry.location.lng,
-                  };
+            <SearchBar
+              onClose={closeSearch}
+              onPlaceSelect={(destCoords, name) => {
+                setDestination(destCoords);
+                initRouteOrigin(activeCoords);
+                setRouteCoordinates([]);
+                setIsSearching(false);
+                setIsNavigating(false);
 
-                  setDestination(destCoords);
-                  initRouteOrigin(activeCoords);
-                  setRouteCoordinates([]);
-                  setIsSearching(false);
-                  setIsNavigating(false);
-
-                  if (autoStartTimer.current) clearTimeout(autoStartTimer.current);
-                  autoStartTimer.current = setTimeout(() => {
-                    setIsNavigating(true);
-                  }, 5000);
-                }
+                if (autoStartTimer.current) clearTimeout(autoStartTimer.current);
+                autoStartTimer.current = setTimeout(() => {
+                  setIsNavigating(true);
+                }, 5000);
               }}
-              query={{ key: GOOGLE_API_KEY, language: "ro", components: "country:ro" }}
-              fetchDetails={true}
-              enablePoweredByContainer={false}
-              styles={searchBarStyles}
-              textInputProps={{ placeholderTextColor: "#888", autoFocus: true }}
-              renderLeftButton={() => <View style={styles.iconPadding}><Search color="#888" size={20} /></View>}
-              renderRightButton={() => (
-                <TouchableOpacity onPress={closeSearch} style={styles.iconPadding}>
-                  <X color="#888" size={24} />
-                </TouchableOpacity>
-              )}
-              renderRow={(data) => (
-                <View style={styles.resultRow}>
-                  <MapPin color="#8A2BE2" size={18} style={{ marginRight: 10 }} />
-                  <Text style={styles.resultText}>{data.description}</Text>
-                </View>
-              )}
             />
           </View>
         ) : (
@@ -547,8 +525,6 @@ const styles = StyleSheet.create({
   map: { flex: 1 },
   searchContainer: { flex: 1, backgroundColor: "#000" },
   iconPadding: { justifyContent: 'center', paddingHorizontal: 15 },
-  resultRow: { flexDirection: 'row', alignItems: 'center', padding: 5 },
-  resultText: { color: "#FFF", fontSize: 16 },
   bottomSection: {
     backgroundColor: "rgba(10, 10, 10, 0.95)",
     borderTopWidth: 1,
@@ -742,13 +718,6 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
 });
-
-const searchBarStyles = {
-  textInputContainer: { backgroundColor: "#111", height: 60, borderBottomWidth: 1, borderBottomColor: "#222" },
-  textInput: { color: "#FFF", fontSize: 18, backgroundColor: "transparent" },
-  listView: { backgroundColor: "#000" },
-  row: { backgroundColor: "#000", padding: 15, borderBottomColor: "#222", borderBottomWidth: 0.5 },
-};
 
 const nightMapStyle = [
   { elementType: "geometry", stylers: [{ color: "#000000" }] },

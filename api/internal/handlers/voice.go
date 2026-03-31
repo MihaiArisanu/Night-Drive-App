@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/MihaiArisanu/nightdrive-backend/internal/ws"
@@ -19,17 +20,19 @@ func UploadVoiceHandler(hub *ws.Hub) http.HandlerFunc {
 			return
 		}
 
-		err := r.ParseMultipartForm(10 << 20)
+		r.Body = http.MaxBytesReader(w, r.Body, 5<<20)
+
+		err := r.ParseMultipartForm(5 << 20)
 		if err != nil {
 			http.Error(w, "File too large", http.StatusBadRequest)
 			return
 		}
 
 		groupId := r.FormValue("groupId")
-		senderId := r.FormValue("senderId")
 		senderName := r.FormValue("senderName")
 
-		if groupId == "" || senderId == "" || senderName == "" {
+		senderId, ok := r.Context().Value(UserIDKey).(string)
+		if !ok || groupId == "" || senderName == "" {
 			http.Error(w, "Missing required fields", http.StatusBadRequest)
 			return
 		}
@@ -40,6 +43,25 @@ func UploadVoiceHandler(hub *ws.Hub) http.HandlerFunc {
 			return
 		}
 		defer file.Close()
+
+		buff := make([]byte, 512)
+		_, err = file.Read(buff)
+		if err != nil {
+			http.Error(w, "Failed to read file", http.StatusInternalServerError)
+			return
+		}
+
+		filetype := http.DetectContentType(buff)
+		if !strings.HasPrefix(filetype, "audio/") && filetype != "application/octet-stream" && filetype != "video/mp4" {
+			http.Error(w, "Invalid file format", http.StatusUnsupportedMediaType)
+			return
+		}
+
+		_, err = file.Seek(0, io.SeekStart)
+		if err != nil {
+			http.Error(w, "Failed to process file", http.StatusInternalServerError)
+			return
+		}
 
 		uploadDir := "./uploads/voice"
 		os.MkdirAll(uploadDir, os.ModePerm)

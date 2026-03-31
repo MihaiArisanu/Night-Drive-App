@@ -2,12 +2,12 @@ import { useNavigation } from "@react-navigation/native";
 import { Menu, Moon, Zap } from "lucide-react-native";
 import React, { useState } from "react";
 import { StyleSheet, TouchableOpacity, View } from "react-native";
-import { useSettings } from "../context/SettingsContext";
+import { useSettingsStore } from '../store/useSettingsStore';
 import { IconButton } from "./IconButton";
 
 export const TopBar = () => {
   const navigation = useNavigation<any>();
-  const { isDNDActive, setIsDNDActive } = useSettings();
+  const { isDNDActive, setIsDNDActive } = useSettingsStore();
   const [isFastestRoute, setIsFastestRoute] = useState(false);
 
   return (

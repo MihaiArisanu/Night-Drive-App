@@ -33,10 +33,38 @@ export default function PermissionErrorScreen({ navigation }: any) {
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center', padding: 30 },
-    icon: { marginBottom: 20 },
-    title: { color: '#FFF', fontSize: 24, fontWeight: 'bold', marginBottom: 15 },
-    message: { color: '#888', fontSize: 16, textAlign: 'center', lineHeight: 24, marginBottom: 40 },
-    button: { backgroundColor: '#8A2BE2', paddingVertical: 15, paddingHorizontal: 40, borderRadius: 12 },
-    buttonText: { color: '#FFF', fontSize: 18, fontWeight: 'bold' },
+    container: {
+        flex: 1,
+        backgroundColor: '#000',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 30
+    },
+    icon: {
+        marginBottom: 20
+    },
+    title: {
+        color: '#FFF',
+        fontSize: 24,
+        fontWeight: 'bold',
+        marginBottom: 15
+    },
+    message: {
+        color: '#888',
+        fontSize: 16,
+        textAlign: 'center',
+        lineHeight: 24,
+        marginBottom: 40
+    },
+    button: {
+        backgroundColor: '#8A2BE2',
+        paddingVertical: 15,
+        paddingHorizontal: 40,
+        borderRadius: 12
+    },
+    buttonText: {
+        color: '#FFF',
+        fontSize: 18,
+        fontWeight: 'bold'
+    },
 });
