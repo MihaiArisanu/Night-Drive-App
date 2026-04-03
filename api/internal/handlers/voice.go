@@ -92,7 +92,7 @@ func UploadVoiceHandler(hub *ws.Hub) http.HandlerFunc {
 
 		wsBytes, err := json.Marshal(wsPayload)
 		if err == nil {
-			hub.Broadcast <- wsBytes
+			hub.Publish(wsBytes)
 		}
 
 		w.Header().Set("Content-Type", "application/json")

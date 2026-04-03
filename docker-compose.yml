@@ -12,6 +12,13 @@ services:
       - nightdrive-db-data:/var/lib/postgresql/data
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    container_name: nightdrive-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
   nightdrive-api:
     build: ./api
     container_name: nightdrive-backend
@@ -21,6 +28,7 @@ services:
       DB_NAME: ${DB_NAME}
       DB_HOST: db
       DB_PORT: 5432
+      REDIS_URL: redis:6379
     ports:
       - "8080:8080"
     volumes:
@@ -29,6 +37,7 @@ services:
       - ./api/.env
     depends_on:
       - db
+      - redis
     restart: unless-stopped
 
   nightdrive-client:

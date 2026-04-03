@@ -5,10 +5,10 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/redis/go-redis/v9"
 )
 
 type contextKey string
@@ -98,28 +98,26 @@ func CORSMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-var (
-	rateLimiterMu sync.Mutex
-	lastRequests  = make(map[string]time.Time)
-)
+func RateLimit(rdb *redis.Client) func(http.HandlerFunc) http.HandlerFunc {
+	return func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			userID, ok := r.Context().Value(UserIDKey).(string)
+			if !ok {
+				userID = r.RemoteAddr
+			}
 
-func RateLimit(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		userID, ok := r.Context().Value(UserIDKey).(string)
-		if !ok {
-			userID = r.RemoteAddr
+			key := "rate_limit:" + userID
+			ctx := context.Background()
+
+			val, _ := rdb.Get(ctx, key).Result()
+			if val != "" {
+				http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+				return
+			}
+
+			rdb.Set(ctx, key, "1", 3*time.Second)
+
+			next.ServeHTTP(w, r)
 		}
-
-		rateLimiterMu.Lock()
-		lastReq, exists := lastRequests[userID]
-		if exists && time.Since(lastReq) < 3*time.Second {
-			rateLimiterMu.Unlock()
-			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
-			return
-		}
-		lastRequests[userID] = time.Now()
-		rateLimiterMu.Unlock()
-
-		next.ServeHTTP(w, r)
 	}
 }

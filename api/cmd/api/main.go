@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/MihaiArisanu/nightdrive-backend/internal/db"
 	"github.com/MihaiArisanu/nightdrive-backend/internal/handlers"
@@ -19,19 +20,30 @@ func main() {
 
 	go db.StartCleanupWorker(database)
 
-	hub := ws.NewHub()
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		redisURL = "localhost:6379"
+	}
+	rdb := db.NewRedisClient(redisURL)
+
+	hub := ws.NewHub(rdb)
 	go hub.Run()
 
 	mux := http.NewServeMux()
 
+	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("./uploads"))))
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "NightDrive API is running smoothly!")
 	})
+
 	mux.HandleFunc("/api/users", handlers.CreateUserHandler(database))
 	mux.HandleFunc("/api/login", handlers.LoginHandler(database))
 	mux.HandleFunc("/api/events/nearby", handlers.GetNearbyEventsHandler(database))
 	mux.HandleFunc("/api/users/search", handlers.RequireAuth(handlers.SearchUserHandler(database)))
-	mux.HandleFunc("/api/events", handlers.RequireAuth(handlers.CreateEventHandler(database, hub)))
+
+	mux.HandleFunc("/api/events", handlers.RequireAuth(handlers.RateLimit(rdb)(handlers.CreateEventHandler(database, hub))))
+
 	mux.HandleFunc("/api/events/vote", handlers.RequireAuth(handlers.VoteEventHandler(database)))
 	mux.HandleFunc("/api/friends/nearby", handlers.RequireAuth(handlers.GetNearbyFriendsHandler(database)))
 	mux.HandleFunc("/api/voice/upload", handlers.RequireAuth(handlers.UploadVoiceHandler(hub)))
