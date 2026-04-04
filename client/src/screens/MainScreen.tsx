@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import { View, Text, TouchableOpacity, Keyboard, Platform, PermissionsAndroid, StyleSheet, Modal } from "react-native";
-import MapView, { PROVIDER_GOOGLE, Marker } from "react-native-maps";
+import MapView, { PROVIDER_GOOGLE, Marker, Circle } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Search, MapPin, Navigation, Users } from "lucide-react-native";
+import { Search, MapPin, Navigation, Users, Zap } from "lucide-react-native";
 import Geolocation from "react-native-geolocation-service";
 import MapViewDirections from 'react-native-maps-directions';
 import { useKeepAwake } from '@sayem314/react-native-keep-awake';
@@ -26,6 +26,10 @@ import { useNearbyFriends } from '../hooks/useNearbyFriends';
 import { useRideInvite } from '../hooks/useRideInvite';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useLocationBroadcaster } from '../hooks/useLocationBroadcaster';
+import { useDislikedAreas } from '../hooks/useDislikedAreas';
+import { useTelemetry } from '../hooks/useTelemetry';
+import { useActiveRouteSync } from '../hooks/useActiveRouteSync';
+import { usePushNotifications } from '../hooks/usePushNotifications';
 
 import { useSettingsStore } from '../store/useSettingsStore';
 
@@ -51,6 +55,9 @@ export default function MainScreen() {
   const [destination, setDestination] = useState<{ latitude: number, longitude: number } | null>(null);
   const [routeCoordinates, setRouteCoordinates] = useState<{ latitude: number, longitude: number }[]>([]);
   const [isNavigating, setIsNavigating] = useState(false);
+
+  const [isZenSession, setIsZenSession] = useState(false);
+
   const autoStartTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [showRideInvite, setShowRideInvite] = useState(false);
@@ -62,6 +69,8 @@ export default function MainScreen() {
   const { events, refetchEvents } = useNearbyEvents(activeCoords.latitude || 44.4268, activeCoords.longitude || 26.1025);
   const { friends } = useNearbyFriends(activeCoords.latitude, activeCoords.longitude, isDNDActive);
   const { sendInvite } = useRideInvite();
+
+  const { dislikedAreas, addDislike } = useDislikedAreas();
 
   const [isReportModalVisible, setIsReportModalVisible] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState<{ latitude: number, longitude: number } | null>(null);
@@ -122,6 +131,10 @@ export default function MainScreen() {
     isDNDActive
   );
 
+  useTelemetry(activeCoords.latitude, activeCoords.longitude, speedMs);
+  useActiveRouteSync(routeCoordinates, isNavigating);
+  usePushNotifications();
+
   const handleAcceptRide = () => {
     if (inviteData?.groupId) {
       setActiveGroupId(inviteData.groupId);
@@ -139,10 +152,7 @@ export default function MainScreen() {
     if (isDNDActive || !userId || !userName) {
       return;
     }
-
     const result = await sendInvite(friendId, userName, activeCoords.latitude, activeCoords.longitude);
-    if (result.success) {
-    }
   };
 
   const requestLocationPermission = async () => {
@@ -210,6 +220,7 @@ export default function MainScreen() {
     resetRouteOrigin();
     setRouteCoordinates([]);
     setIsNavigating(false);
+    setIsZenSession(false);
     if (autoStartTimer.current) clearTimeout(autoStartTimer.current);
   };
 
@@ -236,6 +247,14 @@ export default function MainScreen() {
     if (result.success) {
       setIsReportModalVisible(false);
       refetchEvents();
+    }
+  };
+
+  const handleDislikeArea = async () => {
+    if (!selectedLocation) return;
+    const success = await addDislike(selectedLocation.latitude, selectedLocation.longitude, "User Manual Block");
+    if (success) {
+      setIsReportModalVisible(false);
     }
   };
 
@@ -280,6 +299,40 @@ export default function MainScreen() {
         },
       });
     } catch (error) {
+    }
+  };
+
+  const toggleZenSession = async () => {
+    const newZenState = !isZenSession;
+    setIsZenSession(newZenState);
+
+    if (newZenState) {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/routes/zen`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            latitude: activeCoords.latitude,
+            longitude: activeCoords.longitude,
+            duration: 30
+          })
+        });
+
+        const data = await response.json();
+        if (data.destination) {
+          setDestination({ latitude: data.destination.lat, longitude: data.destination.lng });
+          initRouteOrigin(activeCoords);
+          setIsNavigating(true);
+        }
+      } catch (error) {
+        console.error("ZenSession failed to start:", error);
+        setIsZenSession(false);
+      }
+    } else {
+      cancelNavigation();
     }
   };
 
@@ -336,7 +389,11 @@ export default function MainScreen() {
                 rotation={heading}
               >
                 <View style={[styles.customMarkerGlow, isSimulating && { shadowColor: "#EF4444" }]}>
-                  <Navigation color={isSimulating ? "#EF4444" : "#8A2BE2"} size={45} fill={isSimulating ? "#EF4444" : "#8A2BE2"} />
+                  <Navigation
+                    color={isSimulating ? "#EF4444" : (isZenSession ? "#10B981" : "#8A2BE2")}
+                    size={45}
+                    fill={isSimulating ? "#EF4444" : (isZenSession ? "#10B981" : "#8A2BE2")}
+                  />
                 </View>
               </Marker>
             )}
@@ -372,6 +429,16 @@ export default function MainScreen() {
               </Marker>
             ))}
 
+            {dislikedAreas?.map((area) => (
+              <Circle
+                key={area.id}
+                center={{ latitude: area.latitude, longitude: area.longitude }}
+                radius={200}
+                strokeColor="rgba(239, 68, 68, 0.5)"
+                fillColor="rgba(239, 68, 68, 0.2)"
+              />
+            ))}
+
             {rendezvousPoint && (
               <Marker coordinate={rendezvousPoint} anchor={{ x: 0.5, y: 0.5 }}>
                 <View style={styles.rendezvousMarker}>
@@ -395,7 +462,7 @@ export default function MainScreen() {
                 waypoints={currentWaypoints}
                 apikey={GOOGLE_API_KEY}
                 strokeWidth={8}
-                strokeColor="#8A2BE2"
+                strokeColor={isZenSession ? "#10B981" : "#8A2BE2"}
                 optimizeWaypoints={true}
                 splitWaypoints={true}
                 onReady={(result) => {
@@ -444,7 +511,13 @@ export default function MainScreen() {
       {!isSearching && (
         <SafeAreaView style={styles.bottomSection} edges={["bottom"]}>
           <View style={styles.contentContainer}>
-            <IconButton icon={<Search color="white" size={28} />} onPress={() => setIsSearching(true)} />
+            <View style={{ flexDirection: 'row', gap: 15 }}>
+              <IconButton icon={<Search color="white" size={28} />} onPress={() => setIsSearching(true)} />
+              <IconButton
+                icon={<Zap color={!isZenSession ? "#F59E0B" : "#888"} size={28} fill={!isZenSession ? "#F59E0B" : "transparent"} />}
+                onPress={toggleZenSession}
+              />
+            </View>
             <View style={styles.centerButtonSpacer}>
               <AddEventButton onPress={() => setModalVisible(true)} />
             </View>
@@ -493,6 +566,15 @@ export default function MainScreen() {
               >
                 <Text style={{ fontSize: 30 }}>💥</Text>
                 <Text style={styles.reportBtnText}>ACCIDENT</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.reportBtn, { borderColor: '#6B7280' }]}
+                onPress={handleDislikeArea}
+                disabled={isSubmitting}
+              >
+                <Text style={{ fontSize: 30 }}>🚫</Text>
+                <Text style={styles.reportBtnText}>BLOCK</Text>
               </TouchableOpacity>
             </View>
 
@@ -693,7 +775,7 @@ const styles = StyleSheet.create({
     marginBottom: 30,
   },
   reportBtn: {
-    width: '30%',
+    width: '22%',
     aspectRatio: 1,
     backgroundColor: '#050505',
     borderRadius: 20,

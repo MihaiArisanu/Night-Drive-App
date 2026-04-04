@@ -19,6 +19,7 @@ func main() {
 	defer database.Close()
 
 	go db.StartCleanupWorker(database)
+	go db.StartChecksumWorker(database)
 
 	redisURL := os.Getenv("REDIS_URL")
 	if redisURL == "" {
@@ -48,6 +49,10 @@ func main() {
 	mux.HandleFunc("/api/friends/nearby", handlers.RequireAuth(handlers.GetNearbyFriendsHandler(database)))
 	mux.HandleFunc("/api/voice/upload", handlers.RequireAuth(handlers.UploadVoiceHandler(hub)))
 	mux.HandleFunc("/api/users/places", handlers.RequireAuth(handlers.PlacesHandler(database)))
+
+	mux.HandleFunc("/api/locations/history", handlers.RequireAuth(handlers.LocationHistoryHandler(database)))
+	mux.HandleFunc("/api/users/dislikes", handlers.RequireAuth(handlers.DislikedAreasHandler(database)))
+	mux.HandleFunc("/api/users/dislikes/", handlers.RequireAuth(handlers.DislikedAreasHandler(database)))
 
 	mux.HandleFunc("/api/ws", func(w http.ResponseWriter, r *http.Request) {
 		handlers.ServeWS(hub, w, r)
