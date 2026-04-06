@@ -2,15 +2,27 @@
 .idea/
 *.iml
 .vscode/
+*.log
+
+.env
+.env.local
+nightdrive-db-data/
 
 api/.env
 api/bin/
 api/vendor/
 
+zen-engine/.env
+zen-engine/venv/
+zen-engine/.venv/
+**/__pycache__/
+**/*.py[cod]
+**/*.so
+.ipynb_checkpoints/
+
 client/node_modules/
 client/.env
 client/npm-debug.log*
-
 client/*.jsbundle
 client/coverage/
 client/.expo/
@@ -21,8 +33,6 @@ client/ios/DerivedData/
 client/ios/*.xcworkspace
 client/ios/*.xcuserstate
 client/ios/vendor/
-client/vendor/
-client/.bundle/
 
 client/android/app/build/
 client/android/build/
@@ -34,11 +44,7 @@ client/android/local.properties
 *.apk
 *.aar
 
-
-
 **/fastlane/test_output
-
-
 **/android/.cxx/
 **/android/.externalNativeBuild/
 **/android/app/.cxx/

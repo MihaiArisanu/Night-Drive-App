@@ -52,6 +52,25 @@ func GetUserByEmail(dbConn *sql.DB, email string) (*models.User, error) {
 	return &user, nil
 }
 
+func GetUserByID(dbConn *sql.DB, id string) (*models.User, error) {
+	query := `
+		SELECT id, username, tag, email, password_hash, created_at 
+		FROM users 
+		WHERE id = $1
+	`
+
+	var user models.User
+	err := dbConn.QueryRowContext(context.Background(), query, id).Scan(
+		&user.ID, &user.Username, &user.Tag, &user.Email, &user.PasswordHash, &user.CreatedAt,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &user, nil
+}
+
 type UserSearchResponse struct {
 	ID       string `json:"id"`
 	Username string `json:"username"`

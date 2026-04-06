@@ -1,6 +1,7 @@
 services:
   db:
     image: postgis/postgis:15-3.4
+    platform: linux/amd64
     container_name: nightdrive-db
     environment:
       POSTGRES_USER: ${DB_USER}
@@ -19,6 +20,16 @@ services:
       - "6379:6379"
     restart: unless-stopped
 
+  zen-engine:
+    build: ./zen-engine
+    container_name: nightdrive-zen
+    environment:
+      - DATABASE_URL=postgresql://zen_ro:${ZEN_RO_PASSWORD}@db:5432/${DB_NAME}
+      - INTERNAL_SECRET=${INTERNAL_SECRET}
+    depends_on:
+      - db
+    restart: unless-stopped
+
   nightdrive-api:
     build: ./api
     container_name: nightdrive-backend
@@ -29,15 +40,17 @@ services:
       DB_HOST: db
       DB_PORT: 5432
       REDIS_URL: redis:6379
+      ZEN_ENGINE_URL: http://zen-engine:8000
     ports:
       - "8080:8080"
     volumes:
       - ./api/uploads:/app/uploads
     env_file:
-      - ./api/.env
+      - .env
     depends_on:
       - db
       - redis
+      - zen-engine 
     restart: unless-stopped
 
   nightdrive-client:
@@ -49,7 +62,7 @@ services:
       - ./client:/app
       - /app/node_modules
     env_file:
-      - ./client/.env
+      - .env
     restart: unless-stopped
     deploy:
       resources:

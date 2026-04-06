@@ -5,9 +5,9 @@ import { useState } from "react";
 import { ActionButton } from "../components/ActionButton";
 
 import { useDeleteAccount } from "../hooks/useDeleteAccount";
-import { useCurrentUser } from "../hooks/useCurrentUser";
 import { useFriendRequests } from "../hooks/useFriendRequests";
 import { useSettingsStore } from '../store/useSettingsStore';
+import { useCurrentUser } from '../hooks/useCurrentUser';
 
 export default function MenuScreen({ navigation }: any) {
   const { currentUser } = useCurrentUser();

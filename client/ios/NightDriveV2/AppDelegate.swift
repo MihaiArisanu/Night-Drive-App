@@ -15,9 +15,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
   ) -> Bool {
-    if let apiKey = Bundle.main.object(forInfoDictionaryKey: "GoogleMapsApiKey") as? String, !apiKey.isEmpty {
-        GMSServices.provideAPIKey(apiKey)
-    }
+    
+    // cheie secure cu bundle id
+    GMSServices.provideAPIKey("AIzaSyAABdt7cDdwgG8fc3R3aFSxlHiBMrQmzVY")
 
     let delegate = ReactNativeDelegate()
     let factory = RCTReactNativeFactory(delegate: delegate)

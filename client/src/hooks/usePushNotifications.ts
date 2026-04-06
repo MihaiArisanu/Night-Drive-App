@@ -10,36 +10,45 @@ export function usePushNotifications() {
         if (!token) return;
 
         const setupNotifications = async () => {
-            const authStatus = await messaging().requestPermission();
-            const enabled =
-                authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
-                authStatus === messaging.AuthorizationStatus.PROVISIONAL;
+            try {
+                const authStatus = await messaging().requestPermission();
+                const enabled =
+                    authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
+                    authStatus === messaging.AuthorizationStatus.PROVISIONAL;
 
-            if (enabled) {
-                const fcmToken = await messaging().getToken();
+                if (enabled) {
+                    const fcmToken = await messaging().getToken();
 
-                if (fcmToken) {
-                    try {
-                        await fetch(`${API_BASE_URL}/api/users/fcm`, {
-                            method: 'PUT',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${token}`
-                            },
-                            body: JSON.stringify({ token: fcmToken })
-                        });
-                    } catch (error) {
-                        console.log("Failed to sync FCM token:", error);
+                    if (fcmToken) {
+                        try {
+                            await fetch(`${API_BASE_URL}/api/users/fcm`, {
+                                method: 'PUT',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'Authorization': `Bearer ${token}`
+                                },
+                                body: JSON.stringify({ token: fcmToken })
+                            });
+                        } catch (error) {
+                            console.log("Failed to sync FCM token:", error);
+                        }
                     }
                 }
+            } catch (error) {
+                console.warn("Firebase Messaging setup skipped (likely missing google-services.json):", error);
             }
         };
 
         setupNotifications();
 
-        const unsubscribe = messaging().onMessage(async remoteMessage => {
-            console.log('New notification in foreground:', remoteMessage);
-        });
+        let unsubscribe = () => {};
+        try {
+            unsubscribe = messaging().onMessage(async remoteMessage => {
+                console.log('New notification in foreground:', remoteMessage);
+            });
+        } catch (error) {
+            console.warn("Firebase Messaging listener skipped:", error);
+        }
 
         return unsubscribe;
     }, [token]);

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1094801389801",
+    "project_id": "nightdrive-main",
+    "storage_bucket": "nightdrive-main.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1094801389801:android:c3687a7761b7d881f11878",
+        "android_client_info": {
+          "package_name": "com.nightdrivev2"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAe32sswJt7n4yTnzzNAOatlw3p7HY4vh0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,14 +1,18 @@
 import { useNavigation } from "@react-navigation/native";
 import { Menu, Moon, Zap } from "lucide-react-native";
-import React, { useState } from "react";
+import React from "react";
 import { StyleSheet, TouchableOpacity, View } from "react-native";
 import { useSettingsStore } from '../store/useSettingsStore';
 import { IconButton } from "./IconButton";
 
-export const TopBar = () => {
+interface TopBarProps {
+  onZenPress?: () => void;
+  isZenActive?: boolean;
+}
+
+export const TopBar = ({ onZenPress, isZenActive }: TopBarProps) => {
   const navigation = useNavigation<any>();
   const { isDNDActive, setIsDNDActive } = useSettingsStore();
-  const [isFastestRoute, setIsFastestRoute] = useState(false);
 
   return (
     <View style={styles.topBar}>
@@ -21,16 +25,16 @@ export const TopBar = () => {
 
       <View style={styles.topRightActions}>
         <TouchableOpacity
-          onPress={() => setIsFastestRoute(!isFastestRoute)}
+          onPress={onZenPress}
           style={[
             styles.actionWrapper,
-            isFastestRoute && styles.activeGlowPurple,
+            isZenActive && styles.activeGlowGreen,
           ]}
         >
           <Zap
-            color={isFastestRoute ? "#A855F7" : "white"}
+            color={isZenActive ? "#10B981" : "white"}
             size={24}
-            fill={isFastestRoute ? "#A855F7" : "none"}
+            fill={isZenActive ? "#10B981" : "none"}
           />
         </TouchableOpacity>
 
@@ -75,5 +79,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.6,
     shadowRadius: 10,
     backgroundColor: "rgba(96, 165, 250, 0.1)",
+  },
+  activeGlowGreen: {
+    shadowColor: "#10B981",
+    shadowOpacity: 0.6,
+    shadowRadius: 10,
+    backgroundColor: "rgba(16, 185, 129, 0.1)",
   },
 });

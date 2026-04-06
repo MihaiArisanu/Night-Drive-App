@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiFetch, AuthStorage } from '../services/api';
+import { useSettingsStore } from '../store/useSettingsStore';
 
 const generateHexTag = (): string => {
     return Math.floor(Math.random() * 0xFFFF).toString(16).toUpperCase().padStart(4, '0');
@@ -29,25 +30,41 @@ export default function AuthScreen({ route, navigation }: any) {
             return;
         }
 
+        // bypass
+        if (isLogin && email.trim().toLowerCase() === 'john' && password === '123456789') {
+            const fakeToken = "bypass_dev_token_12345";
+            const fakeUserId = "john_dev_999";
+
+            await AuthStorage.saveToken(fakeToken);
+            useSettingsStore.getState().setToken(fakeToken);
+            useSettingsStore.getState().setUserId(fakeUserId);
+
+            navigation.replace('Main');
+            return;
+        }
+        // ==========================================
+
         setIsLoading(true);
 
         try {
             if (isLogin) {
                 const data = await apiFetch('/login', {
                     method: 'POST',
-                    body: JSON.stringify({ email, password }),
+                    body: JSON.stringify({ email: email.trim(), password }),
                 });
 
                 await AuthStorage.saveToken(data.token);
+                useSettingsStore.getState().setToken(data.token);
+                useSettingsStore.getState().setUserId(data.user_id);
 
                 navigation.replace('Main');
             } else {
                 await apiFetch('/users', {
                     method: 'POST',
                     body: JSON.stringify({
-                        username,
+                        username: username.trim(),
                         tag: tag,
-                        email,
+                        email: email.trim(),
                         password
                     }),
                 });
@@ -98,11 +115,11 @@ export default function AuthScreen({ route, navigation }: any) {
 
                     <TextInput
                         style={styles.input}
-                        placeholder="Email"
+                        placeholder="Email (or 'john' for bypass)"
                         placeholderTextColor="#888"
                         value={email}
                         onChangeText={setEmail}
-                        keyboardType="email-address"
+                        keyboardType={isLogin ? "default" : "email-address"}
                         autoCapitalize="none"
                     />
                     <TextInput

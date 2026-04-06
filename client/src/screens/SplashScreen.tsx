@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { View, Text, StyleSheet, Image, Platform, PermissionsAndroid } from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
 import { AuthStorage } from '../services/api';
+import { useSettingsStore } from '../store/useSettingsStore';
 
 export default function SplashScreen({ navigation }: any) {
     useEffect(() => {
@@ -25,6 +26,7 @@ export default function SplashScreen({ navigation }: any) {
 
             const token = await AuthStorage.getToken();
             if (token) {
+                useSettingsStore.getState().setToken(token);
                 navigation.replace('Main');
             } else {
                 navigation.replace('Welcome');

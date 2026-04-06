@@ -16,7 +16,7 @@
 
       <meta-data
         android:name="com.google.android.geo.API_KEY"
-        android:value="${googleApiKey}" />
+        android:value="AIzaSyDM_r2rYz5kLkN5zNnPBLiC-l9rh3FNofs" /> <!-- e secure prin amprenta sha1 -->
 
       <activity
         android:name=".MainActivity"

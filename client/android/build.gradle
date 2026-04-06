@@ -6,6 +6,8 @@ buildscript {
         targetSdkVersion = 36
         ndkVersion = "27.1.12297006"
         kotlinVersion = "2.1.20"
+        kotlin_version = "2.1.20"
+        javaVersion = JavaVersion.VERSION_17
         googlePlayServicesVersion = "21.0.1"
         playServicesLocationVersion = "21.0.1"
     }
@@ -19,7 +21,16 @@ buildscript {
         classpath("com.android.tools.build:gradle")
         classpath("com.facebook.react:react-native-gradle-plugin")
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin")
+        classpath("com.google.gms:google-services:4.4.1")
     }
 }
 
 apply plugin: "com.facebook.react.rootproject"
+
+allprojects {
+    tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).all {
+        kotlinOptions {
+            jvmTarget = "17"
+        }
+    }
+}

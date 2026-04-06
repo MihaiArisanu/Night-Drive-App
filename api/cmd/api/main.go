@@ -42,6 +42,7 @@ func main() {
 	mux.HandleFunc("/api/login", handlers.LoginHandler(database))
 	mux.HandleFunc("/api/events/nearby", handlers.GetNearbyEventsHandler(database))
 	mux.HandleFunc("/api/users/search", handlers.RequireAuth(handlers.SearchUserHandler(database)))
+	mux.HandleFunc("/api/users/me", handlers.RequireAuth(handlers.GetUserMeHandler(database)))
 
 	mux.HandleFunc("/api/events", handlers.RequireAuth(handlers.RateLimit(rdb)(handlers.CreateEventHandler(database, hub))))
 
@@ -53,6 +54,10 @@ func main() {
 	mux.HandleFunc("/api/locations/history", handlers.RequireAuth(handlers.LocationHistoryHandler(database)))
 	mux.HandleFunc("/api/users/dislikes", handlers.RequireAuth(handlers.DislikedAreasHandler(database)))
 	mux.HandleFunc("/api/users/dislikes/", handlers.RequireAuth(handlers.DislikedAreasHandler(database)))
+
+	mux.HandleFunc("/api/routes/zen/start", handlers.RequireAuth(handlers.StartZenModeHandler(rdb)))
+	mux.HandleFunc("/api/routes/zen/stop", handlers.RequireAuth(handlers.StopZenModeHandler(rdb)))
+	mux.HandleFunc("/api/routes/zen/sync", handlers.RequireAuth(handlers.SyncZenLocationHandler(rdb)))
 
 	mux.HandleFunc("/api/ws", func(w http.ResponseWriter, r *http.Request) {
 		handlers.ServeWS(hub, w, r)

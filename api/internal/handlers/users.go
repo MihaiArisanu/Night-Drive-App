@@ -159,3 +159,33 @@ func GetNearbyFriendsHandler(database *sql.DB) http.HandlerFunc {
 		json.NewEncoder(w).Encode(nearbyUsers)
 	}
 }
+
+func GetUserMeHandler(database *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		userID, ok := r.Context().Value(UserIDKey).(string)
+		if !ok || userID == "" {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		user, err := db.GetUserByID(database, userID)
+		if err != nil {
+			http.Error(w, "User not found", http.StatusNotFound)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":    user.ID,
+			"name":  user.Username,
+			"tag":   user.Tag,
+			"email": user.Email,
+		})
+	}
+}

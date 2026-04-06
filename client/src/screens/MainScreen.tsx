@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useRef } from "react";
 import { View, Text, TouchableOpacity, Keyboard, Platform, PermissionsAndroid, StyleSheet, Modal } from "react-native";
-import MapView, { PROVIDER_GOOGLE, Marker, Circle } from "react-native-maps";
+import MapView, { PROVIDER_GOOGLE, Marker, Circle, Polyline } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Search, MapPin, Navigation, Users, Zap } from "lucide-react-native";
+import { Search, MapPin, Navigation, Users, Zap, LocateFixed } from "lucide-react-native";
 import Geolocation from "react-native-geolocation-service";
 import MapViewDirections from 'react-native-maps-directions';
 import { useKeepAwake } from '@sayem314/react-native-keep-awake';
-import AudioRecorderPlayer from 'react-native-audio-recorder-player';
 
 import { AddEventButton } from "../components/AddEventButton";
 import { AddEventModal } from "../components/AddEventModal";
@@ -17,6 +16,7 @@ import { RideInviteSheet } from '../components/RideInviteSheet';
 import { SearchBar } from '../components/SearchBar';
 
 import { GOOGLE_API_GENERAL_KEY, API_BASE_URL } from '@env';
+
 import { useLocation } from '../hooks/useLocation';
 import { useDeadReckoning } from '../hooks/useDeadReckoning';
 import { useRerouting } from '../hooks/useRerouting';
@@ -24,18 +24,18 @@ import { useReporting } from '../hooks/useReporting';
 import { useNearbyEvents } from '../hooks/useNearbyEvents';
 import { useNearbyFriends } from '../hooks/useNearbyFriends';
 import { useRideInvite } from '../hooks/useRideInvite';
-import { useWebSocket } from '../hooks/useWebSocket';
+// TEMPORARY DISABLED: import { useWebSocket } from '../hooks/useWebSocket';
 import { useLocationBroadcaster } from '../hooks/useLocationBroadcaster';
 import { useDislikedAreas } from '../hooks/useDislikedAreas';
 import { useTelemetry } from '../hooks/useTelemetry';
 import { useActiveRouteSync } from '../hooks/useActiveRouteSync';
 import { usePushNotifications } from '../hooks/usePushNotifications';
+import { useZenSessionSync } from '../hooks/useZenSessionSync';
+import { decodePolyline } from '../utils/polyline';
 
 import { useSettingsStore } from '../store/useSettingsStore';
 
 const GOOGLE_API_KEY = GOOGLE_API_GENERAL_KEY;
-
-const audioRecorderPlayer = AudioRecorderPlayer;
 
 interface InviteData {
   friendName: string;
@@ -57,6 +57,7 @@ export default function MainScreen() {
   const [isNavigating, setIsNavigating] = useState(false);
 
   const [isZenSession, setIsZenSession] = useState(false);
+  const [zenCoordinates, setZenCoordinates] = useState<{ latitude: number, longitude: number }[]>([]);
 
   const autoStartTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -74,8 +75,6 @@ export default function MainScreen() {
 
   const [isReportModalVisible, setIsReportModalVisible] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState<{ latitude: number, longitude: number } | null>(null);
-
-  const [isRecording, setIsRecording] = useState(false);
 
   const {
     isRerouting,
@@ -105,21 +104,9 @@ export default function MainScreen() {
     setShowRideInvite(true);
   };
 
-  const handleIncomingVoice = async (data: { audioUrl: string; senderName: string }) => {
-    if (isDNDActive) return;
-    try {
-      await audioRecorderPlayer.startPlayer(data.audioUrl);
-      audioRecorderPlayer.addPlayBackListener((e) => {
-        if (e.currentPosition === e.duration) {
-          audioRecorderPlayer.stopPlayer();
-          audioRecorderPlayer.removePlayBackListener();
-        }
-      });
-    } catch (error) {
-    }
-  };
-
-  useWebSocket(token, activeGroupId, handleIncomingInvite, handleIncomingVoice);
+  // TEMPORARY DISABLED (Walkie-Talkie feature):
+  // const handleIncomingVoice = async (data: { audioUrl: string; senderName: string }) => { ... };
+  // useWebSocket(token, activeGroupId, handleIncomingInvite, handleIncomingVoice);
 
   useLocationBroadcaster(
     userId,
@@ -134,6 +121,11 @@ export default function MainScreen() {
   useTelemetry(activeCoords.latitude, activeCoords.longitude, speedMs);
   useActiveRouteSync(routeCoordinates, isNavigating);
   usePushNotifications();
+
+  const appendZenRoute = (newCoords: { latitude: number, longitude: number }[]) => {
+    setZenCoordinates(prev => [...prev, ...newCoords]);
+  };
+  useZenSessionSync(isZenSession, activeCoords.latitude, activeCoords.longitude, appendZenRoute);
 
   const handleAcceptRide = () => {
     if (inviteData?.groupId) {
@@ -152,7 +144,7 @@ export default function MainScreen() {
     if (isDNDActive || !userId || !userName) {
       return;
     }
-    const result = await sendInvite(friendId, userName, activeCoords.latitude, activeCoords.longitude);
+    await sendInvite(friendId, userName, activeCoords.latitude, activeCoords.longitude);
   };
 
   const requestLocationPermission = async () => {
@@ -160,7 +152,7 @@ export default function MainScreen() {
     try {
       const granted = await PermissionsAndroid.requestMultiple([
         PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-        PermissionsAndroid.PERMISSIONS.RECORD_AUDIO
+        // PermissionsAndroid.PERMISSIONS.RECORD_AUDIO // Temporarily disabled
       ]);
       return granted['android.permission.ACCESS_FINE_LOCATION'] === PermissionsAndroid.RESULTS.GRANTED;
     } catch (err) {
@@ -190,25 +182,23 @@ export default function MainScreen() {
   useEffect(() => {
     return () => {
       if (autoStartTimer.current) clearTimeout(autoStartTimer.current);
-      audioRecorderPlayer.stopPlayer();
-      audioRecorderPlayer.removePlayBackListener();
     };
   }, []);
 
   useEffect(() => {
     if (activeCoords.latitude !== 0 && !isSearching && mapRef.current) {
-      if (currentDestination && !isNavigating) return;
+      if (currentDestination && !isNavigating && !isZenSession) return;
 
       const isDriving = speed > 5 || isSimulating;
 
       mapRef.current.animateCamera({
         center: activeCoords,
         heading: isDriving ? heading : 0,
-        pitch: isDriving || isNavigating ? 60 : 0,
-        zoom: isDriving || isNavigating ? 20.5 : 18.5,
+        pitch: isDriving || isNavigating || isZenSession ? 60 : 0,
+        zoom: isDriving || isNavigating || isZenSession ? 20.5 : 18.5,
       }, { duration: 1000 });
     }
-  }, [activeCoords, heading, speed, isSearching, currentDestination, isNavigating, isSimulating]);
+  }, [activeCoords, heading, speed, isSearching, currentDestination, isNavigating, isSimulating, isZenSession]);
 
   const closeSearch = () => {
     setIsSearching(false);
@@ -219,9 +209,25 @@ export default function MainScreen() {
     setDestination(null);
     resetRouteOrigin();
     setRouteCoordinates([]);
+    setZenCoordinates([]);
+
+    if (isZenSession) {
+      setIsZenSession(false);
+      fetch(`${API_BASE_URL}/api/routes/zen/stop`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      }).catch(() => console.log("Failed to stop ZenSession on server"));
+    }
+
     setIsNavigating(false);
-    setIsZenSession(false);
     if (autoStartTimer.current) clearTimeout(autoStartTimer.current);
+  };
+
+  const handleOpenSearch = () => {
+    if (isZenSession) {
+      cancelNavigation();
+    }
+    setIsSearching(true);
   };
 
   const recenterMap = () => {
@@ -258,57 +264,14 @@ export default function MainScreen() {
     }
   };
 
-  const startRecording = async () => {
-    if (Platform.OS === 'android') {
-      const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
-      if (granted !== PermissionsAndroid.RESULTS.GRANTED) return;
-    }
-    setIsRecording(true);
-    try {
-      await audioRecorderPlayer.startRecorder();
-    } catch (error) {
-      setIsRecording(false);
-    }
-  };
-
-  const stopRecording = async () => {
-    if (!isRecording) return;
-    setIsRecording(false);
-    try {
-      const resultUri = await audioRecorderPlayer.stopRecorder();
-      audioRecorderPlayer.removeRecordBackListener();
-
-      if (!activeGroupId || !userId) return;
-
-      const formData = new FormData();
-      formData.append('audio', {
-        uri: resultUri,
-        type: 'audio/mp4',
-        name: `voice_${userId}_${Date.now()}.mp4`,
-      } as any);
-      formData.append('groupId', activeGroupId);
-      formData.append('senderId', userId);
-      if (userName) formData.append('senderName', userName);
-
-      await fetch(`${API_BASE_URL}/api/groups/voice`, {
-        method: 'POST',
-        body: formData,
-        headers: {
-          'Content-Type': 'multipart/form-data',
-          'Authorization': `Bearer ${token}`
-        },
-      });
-    } catch (error) {
-    }
-  };
-
   const toggleZenSession = async () => {
     const newZenState = !isZenSession;
     setIsZenSession(newZenState);
 
     if (newZenState) {
+      setZenCoordinates([]);
       try {
-        const response = await fetch(`${API_BASE_URL}/api/routes/zen`, {
+        const response = await fetch(`${API_BASE_URL}/api/routes/zen/start`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -316,15 +279,17 @@ export default function MainScreen() {
           },
           body: JSON.stringify({
             latitude: activeCoords.latitude,
-            longitude: activeCoords.longitude,
-            duration: 30
+            longitude: activeCoords.longitude
           })
         });
 
-        const data = await response.json();
-        if (data.destination) {
-          setDestination({ latitude: data.destination.lat, longitude: data.destination.lng });
-          initRouteOrigin(activeCoords);
+        const text = await response.text();
+        if (!response.ok) {
+          throw new Error(`ZenSession API Error ${response.status}: ${text}`);
+        }
+        const data = JSON.parse(text);
+        if (data.initialPolyline) {
+          setZenCoordinates(decodePolyline(data.initialPolyline));
           setIsNavigating(true);
         }
       } catch (error) {
@@ -339,7 +304,7 @@ export default function MainScreen() {
   return (
     <View style={styles.container}>
       <SafeAreaView style={styles.topSection} edges={["top"]}>
-        <TopBar />
+        <TopBar onZenPress={toggleZenSession} isZenActive={isZenSession} />
 
         {isSimulating && (
           <View style={styles.simulatingBadge}>
@@ -455,14 +420,14 @@ export default function MainScreen() {
               </Marker>
             )}
 
-            {currentDestination && routeOrigin && (
+            {currentDestination && routeOrigin && !isZenSession && (
               <MapViewDirections
                 origin={routeOrigin}
                 destination={currentDestination}
                 waypoints={currentWaypoints}
                 apikey={GOOGLE_API_KEY}
                 strokeWidth={8}
-                strokeColor={isZenSession ? "#10B981" : "#8A2BE2"}
+                strokeColor="#8A2BE2"
                 optimizeWaypoints={true}
                 splitWaypoints={true}
                 onReady={(result) => {
@@ -481,41 +446,28 @@ export default function MainScreen() {
                 }}
               />
             )}
+
+            {isZenSession && zenCoordinates.length > 0 && (
+              <Polyline
+                coordinates={zenCoordinates}
+                strokeWidth={8}
+                strokeColor="#10B981"
+                lineCap="round"
+                lineJoin="round"
+              />
+            )}
           </MapView>
         )}
-
-        {!isSearching && (
-          <TouchableOpacity style={styles.recenterBtn} onPress={recenterMap}>
-            <Text style={styles.recenterIcon}>📍</Text>
-          </TouchableOpacity>
-        )}
-
-        {!isSearching && activeGroupId && (
-          <View style={styles.pttContainer}>
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPressIn={startRecording}
-              onPressOut={stopRecording}
-              style={[
-                styles.pttBtn,
-                isRecording ? styles.pttBtnActive : styles.pttBtnIdle
-              ]}
-            >
-              <Text style={styles.pttIcon}>{isRecording ? '🎙️' : '🎤'}</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
       </View>
 
       {!isSearching && (
         <SafeAreaView style={styles.bottomSection} edges={["bottom"]}>
           <View style={styles.contentContainer}>
             <View style={{ flexDirection: 'row', gap: 15 }}>
-              <IconButton icon={<Search color="white" size={28} />} onPress={() => setIsSearching(true)} />
+              <IconButton icon={<Search color="white" size={28} />} onPress={handleOpenSearch} />
               <IconButton
-                icon={<Zap color={!isZenSession ? "#F59E0B" : "#888"} size={28} fill={!isZenSession ? "#F59E0B" : "transparent"} />}
-                onPress={toggleZenSession}
+                icon={<LocateFixed color="#3B82F6" size={28} />}
+                onPress={recenterMap}
               />
             </View>
             <View style={styles.centerButtonSpacer}>
@@ -593,7 +545,6 @@ export default function MainScreen() {
         onAccept={handleAcceptRide}
         onDecline={handleDeclineRide}
       />
-
     </View>
   );
 }
@@ -691,61 +642,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 1,
     shadowRadius: 10,
     elevation: 8,
-  },
-  recenterBtn: {
-    position: 'absolute',
-    bottom: 120,
-    right: 20,
-    width: 55,
-    height: 55,
-    backgroundColor: '#111',
-    borderRadius: 30,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#333',
-    shadowColor: '#3B82F6',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 10,
-    elevation: 5,
-  },
-  recenterIcon: {
-    fontSize: 24,
-  },
-  pttContainer: {
-    position: 'absolute',
-    bottom: 110,
-    alignSelf: 'center',
-    alignItems: 'center',
-  },
-  pttBtn: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 3,
-    elevation: 8,
-  },
-  pttBtnIdle: {
-    backgroundColor: '#1A1A1A',
-    borderColor: '#333',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 5,
-  },
-  pttBtnActive: {
-    backgroundColor: '#EF4444',
-    borderColor: '#F87171',
-    shadowColor: '#EF4444',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 1,
-    shadowRadius: 15,
-  },
-  pttIcon: {
-    fontSize: 28,
   },
   modalOverlay: {
     flex: 1,

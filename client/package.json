@@ -1,12 +1,12 @@
 {
-  "name": "NightDriveV2",
+  "name": "nightdrive",
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "android": "react-native run-android",
+    "android": "adb reverse tcp:8080 tcp:8080 && adb reverse tcp:8000 tcp:8000 && react-native run-android",
     "ios": "react-native run-ios",
     "lint": "eslint .",
-    "start": "react-native start",
+    "start": "adb reverse tcp:8080 tcp:8080 && adb reverse tcp:8000 tcp:8000 && react-native start",
     "test": "jest"
   },
   "dependencies": {
@@ -21,7 +21,6 @@
     "lucide-react-native": "^0.575.0",
     "react": "19.2.3",
     "react-native": "0.84.0",
-    "react-native-audio-recorder-player": "^4.5.0",
     "react-native-dotenv": "^3.4.11",
     "react-native-geolocation-service": "^5.3.1",
     "react-native-gesture-handler": "^2.30.0",
