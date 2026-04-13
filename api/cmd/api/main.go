@@ -35,7 +35,9 @@ func main() {
 	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("./uploads"))))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "NightDrive API is running smoothly!")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprintf(w, `{"error": "Route not found", "path": "%s"}`, r.URL.Path)
 	})
 
 	mux.HandleFunc("/api/users", handlers.CreateUserHandler(database))
@@ -44,7 +46,7 @@ func main() {
 	mux.HandleFunc("/api/users/search", handlers.RequireAuth(handlers.SearchUserHandler(database)))
 	mux.HandleFunc("/api/users/me", handlers.RequireAuth(handlers.GetUserMeHandler(database)))
 
-	mux.HandleFunc("/api/events", handlers.RequireAuth(handlers.RateLimit(rdb)(handlers.CreateEventHandler(database, hub))))
+	mux.HandleFunc("/api/events", handlers.RequireAuth(handlers.CreateEventHandler(database, hub)))
 
 	mux.HandleFunc("/api/events/vote", handlers.RequireAuth(handlers.VoteEventHandler(database)))
 	mux.HandleFunc("/api/friends/nearby", handlers.RequireAuth(handlers.GetNearbyFriendsHandler(database)))

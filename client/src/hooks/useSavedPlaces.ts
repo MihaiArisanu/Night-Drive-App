@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { API_BASE_URL } from '@env';
+import { apiFetch } from '../services/api';
 import { useSettingsStore } from '../store/useSettingsStore';
 
 export interface SavedPlace {
@@ -18,10 +18,7 @@ export function useSavedPlaces() {
         if (!token) return;
         setIsLoading(true);
         try {
-            const response = await fetch(`${API_BASE_URL}/api/users/places`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            const data = await response.json();
+            const data = await apiFetch('/users/places');
             if (data.places) {
                 setSavedPlaces(data.places);
             }
@@ -39,21 +36,15 @@ export function useSavedPlaces() {
     const savePlace = async (name: string, latitude: number, longitude: number) => {
         if (!token) return false;
         try {
-            const response = await fetch(`${API_BASE_URL}/api/users/places`, {
+            await apiFetch('/users/places', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
                 body: JSON.stringify({ name, latitude, longitude })
             });
-
-            if (response.ok) {
-                await fetchSavedPlaces();
-                return true;
-            }
-            return false;
+            // Dacă ajunge aici, request-ul a fost cu succes
+            await fetchSavedPlaces();
+            return true;
         } catch (error) {
+            console.error('Failed to save place:', error);
             return false;
         }
     };

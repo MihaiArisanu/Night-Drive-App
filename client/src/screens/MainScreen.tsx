@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { View, Text, TouchableOpacity, Keyboard, Platform, PermissionsAndroid, StyleSheet, Modal } from "react-native";
 import MapView, { PROVIDER_GOOGLE, Marker, Circle, Polyline } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Search, MapPin, Navigation, Users, Zap, LocateFixed } from "lucide-react-native";
+import { Search, MapPin, Navigation, Users, LocateFixed } from "lucide-react-native";
 import Geolocation from "react-native-geolocation-service";
 import MapViewDirections from 'react-native-maps-directions';
 import { useKeepAwake } from '@sayem314/react-native-keep-awake';
@@ -15,7 +15,7 @@ import { TopBar } from "../components/TopBar";
 import { RideInviteSheet } from '../components/RideInviteSheet';
 import { SearchBar } from '../components/SearchBar';
 
-import { GOOGLE_API_GENERAL_KEY, API_BASE_URL } from '@env';
+import { API_BASE_URL } from '@env';
 
 import { useLocation } from '../hooks/useLocation';
 import { useDeadReckoning } from '../hooks/useDeadReckoning';
@@ -24,7 +24,7 @@ import { useReporting } from '../hooks/useReporting';
 import { useNearbyEvents } from '../hooks/useNearbyEvents';
 import { useNearbyFriends } from '../hooks/useNearbyFriends';
 import { useRideInvite } from '../hooks/useRideInvite';
-// TEMPORARY DISABLED: import { useWebSocket } from '../hooks/useWebSocket';
+import { useWebSocket } from '../hooks/useWebSocket';
 import { useLocationBroadcaster } from '../hooks/useLocationBroadcaster';
 import { useDislikedAreas } from '../hooks/useDislikedAreas';
 import { useTelemetry } from '../hooks/useTelemetry';
@@ -35,7 +35,7 @@ import { decodePolyline } from '../utils/polyline';
 
 import { useSettingsStore } from '../store/useSettingsStore';
 
-const GOOGLE_API_KEY = GOOGLE_API_GENERAL_KEY;
+const GOOGLE_API_KEY = "AIzaSyA0u4QkWl5ZVC53zbFIu5Gfio-gS-7-6ds";
 
 interface InviteData {
   friendName: string;
@@ -86,6 +86,7 @@ export default function MainScreen() {
 
   const [isModalVisible, setModalVisible] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [searchSessionId, setSearchSessionId] = useState(0);
   const [region, setRegion] = useState({
     latitude: 44.4268,
     longitude: 26.1025,
@@ -103,10 +104,6 @@ export default function MainScreen() {
     setInviteData(data);
     setShowRideInvite(true);
   };
-
-  // TEMPORARY DISABLED (Walkie-Talkie feature):
-  // const handleIncomingVoice = async (data: { audioUrl: string; senderName: string }) => { ... };
-  // useWebSocket(token, activeGroupId, handleIncomingInvite, handleIncomingVoice);
 
   useLocationBroadcaster(
     userId,
@@ -152,7 +149,6 @@ export default function MainScreen() {
     try {
       const granted = await PermissionsAndroid.requestMultiple([
         PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-        // PermissionsAndroid.PERMISSIONS.RECORD_AUDIO // Temporarily disabled
       ]);
       return granted['android.permission.ACCESS_FINE_LOCATION'] === PermissionsAndroid.RESULTS.GRANTED;
     } catch (err) {
@@ -213,7 +209,7 @@ export default function MainScreen() {
 
     if (isZenSession) {
       setIsZenSession(false);
-      fetch(`${API_BASE_URL}/api/routes/zen/stop`, {
+      fetch(`${API_BASE_URL}/routes/zen/stop`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       }).catch(() => console.log("Failed to stop ZenSession on server"));
@@ -227,6 +223,7 @@ export default function MainScreen() {
     if (isZenSession) {
       cancelNavigation();
     }
+    setSearchSessionId(prev => prev + 1);
     setIsSearching(true);
   };
 
@@ -271,7 +268,7 @@ export default function MainScreen() {
     if (newZenState) {
       setZenCoordinates([]);
       try {
-        const response = await fetch(`${API_BASE_URL}/api/routes/zen/start`, {
+        const response = await fetch(`${API_BASE_URL}/routes/zen/start`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -317,15 +314,17 @@ export default function MainScreen() {
         {isSearching ? (
           <View style={styles.searchContainer}>
             <SearchBar
+              key={searchSessionId}
               onClose={closeSearch}
               onPlaceSelect={(destCoords, name) => {
+                if (autoStartTimer.current) clearTimeout(autoStartTimer.current);
+
+                setIsNavigating(false);
+                setRouteCoordinates([]);
                 setDestination(destCoords);
                 initRouteOrigin(activeCoords);
-                setRouteCoordinates([]);
                 setIsSearching(false);
-                setIsNavigating(false);
 
-                if (autoStartTimer.current) clearTimeout(autoStartTimer.current);
                 autoStartTimer.current = setTimeout(() => {
                   setIsNavigating(true);
                 }, 5000);
@@ -428,6 +427,8 @@ export default function MainScreen() {
                 apikey={GOOGLE_API_KEY}
                 strokeWidth={8}
                 strokeColor="#8A2BE2"
+                mode="DRIVING"
+                precision="high"
                 optimizeWaypoints={true}
                 splitWaypoints={true}
                 onReady={(result) => {
@@ -441,7 +442,8 @@ export default function MainScreen() {
                     });
                   }
                 }}
-                onError={() => {
+                onError={(errorMessage) => {
+                  console.log("Directions Error: ", errorMessage);
                   finishRerouting();
                 }}
               />

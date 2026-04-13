@@ -18,7 +18,7 @@ export function SearchBar({ onClose, onPlaceSelect }: SearchBarProps) {
     const [activeTab, setActiveTab] = useState<SearchTab>('none');
     const { coords } = useLocation();
 
-    const { places, isLoading, error } = useNearbyPlaces(coords.latitude, coords.longitude, activeTab);
+    const { places, isLoading, error } = useNearbyPlaces(coords?.latitude || 0, coords?.longitude || 0, activeTab);
     const { savedPlaces, isLoadingPlaces, savePlace } = useSavedPlaces();
 
     const [placeToSave, setPlaceToSave] = useState<{ name: string; lat: number; lng: number } | null>(null);
@@ -97,47 +97,6 @@ export function SearchBar({ onClose, onPlaceSelect }: SearchBarProps) {
 
     return (
         <View style={styles.container}>
-            <GooglePlacesAutocomplete
-                placeholder={activeTab === 'saved' ? "Search for a place to save..." : "Where do you want to go?"}
-                onPress={(data, details = null) => {
-                    if (details) {
-                        if (activeTab === 'saved') {
-                            setPlaceToSave({
-                                name: data.description,
-                                lat: details.geometry.location.lat,
-                                lng: details.geometry.location.lng
-                            });
-                        } else {
-                            onPlaceSelect(
-                                { latitude: details.geometry.location.lat, longitude: details.geometry.location.lng },
-                                data.description
-                            );
-                        }
-                    }
-                }}
-                query={{ key: GOOGLE_API_GENERAL_KEY, language: "en", components: "country:ro" }}
-                fetchDetails={true}
-                enablePoweredByContainer={false}
-                styles={searchBarStyles}
-                textInputProps={{ placeholderTextColor: "#888", autoFocus: true }}
-                renderLeftButton={() => (
-                    <View style={styles.iconPadding}>
-                        <Search color="#888" size={20} />
-                    </View>
-                )}
-                renderRightButton={() => (
-                    <TouchableOpacity onPress={onClose} style={styles.iconPadding}>
-                        <X color="#888" size={24} />
-                    </TouchableOpacity>
-                )}
-                renderRow={(data) => (
-                    <View style={styles.resultRow}>
-                        <MapPin color={activeTab === 'saved' ? "#F59E0B" : "#8A2BE2"} size={18} style={{ marginRight: 10 }} />
-                        <Text style={styles.resultText}>{data.description}</Text>
-                    </View>
-                )}
-            />
-
             <View style={styles.filterContainer}>
                 <TouchableOpacity style={[styles.filterBtn, (activeTab === 'gas' || activeTab === 'gas_ev') && styles.filterBtnActive]} onPress={() => handleTabPress('gas')}>
                     <Text style={[styles.filterBtnText, (activeTab === 'gas' || activeTab === 'gas_ev') && styles.filterBtnTextActive]}>⛽ Gas</Text>
@@ -150,7 +109,7 @@ export function SearchBar({ onClose, onPlaceSelect }: SearchBarProps) {
                 </TouchableOpacity>
             </View>
 
-            {activeTab !== 'none' && (
+            {activeTab !== 'none' ? (
                 <View style={styles.resultsContainer}>
                     {activeTab === 'saved' ? (
                         isLoadingPlaces ? (
@@ -161,7 +120,7 @@ export function SearchBar({ onClose, onPlaceSelect }: SearchBarProps) {
                             <View style={styles.centerContent}>
                                 <Star color="#F59E0B" size={48} style={{ marginBottom: 10, opacity: 0.5 }} />
                                 <Text style={styles.emptyStateText}>You haven't saved any locations yet.</Text>
-                                <Text style={styles.emptyStateSubtext}>Search for a place above to save it.</Text>
+                                <Text style={styles.emptyStateSubtext}>Search for a place to save it.</Text>
                             </View>
                         ) : (
                             <ScrollView keyboardShouldPersistTaps="handled">
@@ -185,9 +144,49 @@ export function SearchBar({ onClose, onPlaceSelect }: SearchBarProps) {
                         )
                     )}
                 </View>
+            ) : (
+                <GooglePlacesAutocomplete
+                    placeholder="Where do you want to go?"
+                    onPress={(data, details = null) => {
+                        if (details && details.geometry) {
+                            onPlaceSelect(
+                                { latitude: details.geometry.location.lat, longitude: details.geometry.location.lng },
+                                data.description
+                            );
+                        } else {
+
+                            console.warn("Google API did not return geometry details.");
+                        }
+                    }}
+                    onFail={(error) => console.error("❌ EROARE GOOGLE PLACES:", error)}
+                    query={{
+                        key: "AIzaSyA0u4QkWl5ZVC53zbFIu5Gfio-gS-7-6ds",
+                        language: "en",
+                        components: "country:ro"
+                    }}
+                    fetchDetails={true}
+                    enablePoweredByContainer={false}
+                    styles={searchBarStyles}
+                    textInputProps={{ placeholderTextColor: "#888", autoFocus: true }}
+                    renderLeftButton={() => (
+                        <View style={styles.iconPadding}>
+                            <Search color="#888" size={20} />
+                        </View>
+                    )}
+                    renderRightButton={() => (
+                        <TouchableOpacity onPress={onClose} style={styles.iconPadding}>
+                            <X color="#888" size={24} />
+                        </TouchableOpacity>
+                    )}
+                    renderRow={(data) => (
+                        <View style={styles.resultRow}>
+                            <MapPin color="#8A2BE2" size={18} style={{ marginRight: 10 }} />
+                            <Text style={styles.resultText}>{data.description}</Text>
+                        </View>
+                    )}
+                />
             )}
 
-            {/* POP-UP (Modal) PENTRU SALVAREA LOCAȚIEI */}
             <Modal visible={!!placeToSave} transparent={true} animationType="fade">
                 <View style={styles.modalOverlay}>
                     <View style={styles.modalContent}>
@@ -252,7 +251,8 @@ const styles = StyleSheet.create({
         paddingVertical: 12,
         backgroundColor: '#0A0A0A',
         borderBottomWidth: 1,
-        borderBottomColor: '#222'
+        borderBottomColor: '#222',
+        zIndex: 10
     },
     filterBtn: {
         paddingVertical: 8,
@@ -447,6 +447,9 @@ const styles = StyleSheet.create({
 });
 
 const searchBarStyles = {
+    container: {
+        flex: 1,
+    },
     textInputContainer: {
         backgroundColor: "#111",
         height: 60,

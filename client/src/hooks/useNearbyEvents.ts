@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { API_BASE_URL } from '@env';
+// 1. Importăm apiFetch în loc de fetch-ul nativ
+import { apiFetch } from '../services/api'; // Ajustează calea către api.ts-ul tău
 
 export interface TrafficEvent {
     id: string;
@@ -14,26 +15,29 @@ export function useNearbyEvents(userLat: number | null, userLng: number | null) 
     const [isLoading, setIsLoading] = useState(false);
 
     const fetchEvents = useCallback(async () => {
-        if (!userLat || !userLng) return;
+        // Verificăm strict dacă avem numere
+        if (userLat === null || userLng === null || isNaN(userLat) || isNaN(userLng)) {
+            console.log("⏳ Așteptăm coordonate valide...");
+            return;
+        }
 
         setIsLoading(true);
         try {
             const radius = 20000;
             const limit = 50;
 
-            const response = await fetch(
-                `${API_BASE_URL}/api/events?lat=${userLat}&lng=${userLng}&radius=${radius}&limit=${limit}`
+            // Folosim apiFetch și curățăm parametrii
+            const data = await apiFetch(
+                `/events/nearby?lat=${userLat.toFixed(6)}&lng=${userLng.toFixed(6)}&radius=${radius}&limit=${limit}`
             );
-
-            if (!response.ok) throw new Error('Failed to fetch events');
-
-            const data = await response.json();
 
             if (data && Array.isArray(data)) {
                 setEvents(data);
+                console.log(`✅ Am descărcat ${data.length} evenimente.`);
             }
         } catch (error) {
-            console.error("Error fetching nearby events:", error);
+            // Aici vor apărea erorile de tip "401" sau "500" într-un format lizibil
+            console.error("❌ Eroare la fetchEvents:", error instanceof Error ? error.message : String(error));
         } finally {
             setIsLoading(false);
         }
@@ -41,9 +45,7 @@ export function useNearbyEvents(userLat: number | null, userLng: number | null) 
 
     useEffect(() => {
         fetchEvents();
-
         const intervalId = setInterval(fetchEvents, 30000);
-
         return () => clearInterval(intervalId);
     }, [fetchEvents]);
 

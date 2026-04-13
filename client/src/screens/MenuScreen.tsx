@@ -71,9 +71,10 @@ export default function MenuScreen({ navigation }: any) {
           </View>
 
           {currentUser ? (
-            <Text style={styles.userName}>
-              {currentUser.name} {currentUser.tag}
-            </Text>
+            <View style={styles.nameContainer}>
+              <Text style={styles.userName}>{currentUser.name}</Text>
+              <Text style={styles.userTag}>#{currentUser.tag}</Text>
+            </View>
           ) : (
             <ActivityIndicator color="#A855F7" size="small" style={{ marginTop: 5 }} />
           )}
@@ -256,38 +257,31 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#000000",
   },
-
   scrollContent: {
     paddingBottom: 40,
   },
-
   header: {
     paddingHorizontal: 20,
     paddingVertical: 10,
   },
-
   backButton: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
   },
-
   backText: {
     color: "white",
     fontSize: 16,
     fontWeight: "bold",
   },
-
   profileSection: {
     alignItems: "center",
     marginVertical: 30,
   },
-
   avatarContainer: {
     position: "relative",
     marginBottom: 15,
   },
-
   avatar: {
     width: 100,
     height: 100,
@@ -296,7 +290,6 @@ const styles = StyleSheet.create({
     borderColor: "#A855F7",
     backgroundColor: "#111",
   },
-
   addPhotoBadge: {
     position: "absolute",
     bottom: 0,
@@ -310,30 +303,35 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: "#000",
   },
-
+  nameContainer: {
+    alignItems: "center",
+    gap: 2,
+  },
   userName: {
     color: "white",
     fontSize: 22,
     fontWeight: "900",
     letterSpacing: 1,
   },
-
+  userTag: {
+    color: "white",
+    fontSize: 14,
+    fontWeight: "bold",
+    opacity: 0.8,
+  },
   groupSection: {
     paddingHorizontal: 20,
     marginBottom: 20,
   },
-
   groupHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 10,
   },
-
   leaveButton: {
     padding: 5,
   },
-
   memberCard: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -345,21 +343,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#1A1A1A",
   },
-
   memberText: {
     color: "white",
     fontWeight: "bold",
   },
-
   addMemberBtn: {
     padding: 5,
   },
-
   menuList: {
     paddingHorizontal: 20,
     gap: 15,
   },
-
   menuItem: {
     backgroundColor: "#0A0A0A",
     padding: 20,
@@ -367,43 +361,36 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#1A1A1A",
   },
-
   menuItemLeft: {
     flexDirection: "row",
     alignItems: "center",
     gap: 15,
   },
-
   menuItemText: {
     color: "white",
     fontSize: 14,
     fontWeight: "bold",
     letterSpacing: 1,
   },
-
   messageSection: {
     marginTop: 40,
     paddingHorizontal: 20,
   },
-
   messageHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     marginBottom: 15,
   },
-
   messageTitleRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
   },
-
   messageTitle: {
     color: "white",
     fontSize: 16,
     fontWeight: "900",
   },
-
   notificationCard: {
     backgroundColor: "#111",
     padding: 20,
@@ -412,7 +399,6 @@ const styles = StyleSheet.create({
     borderColor: "#A855F7",
     marginBottom: 10,
   },
-
   notificationText: {
     color: "white",
     fontSize: 14,
@@ -420,19 +406,16 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginBottom: 15,
   },
-
   notificationActions: {
     flexDirection: "row",
     justifyContent: "center",
     gap: 15,
   },
-
   notifBtn: {
     paddingVertical: 10,
     paddingHorizontal: 20,
     minWidth: 100,
   },
-
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0, 0, 0, 0.8)",
@@ -440,7 +423,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 20,
   },
-
   modalContent: {
     backgroundColor: "#111",
     width: "100%",
@@ -449,21 +431,18 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#A855F7",
   },
-
   modalHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 20,
   },
-
   modalTitle: {
     color: "white",
     fontSize: 18,
     fontWeight: "900",
     letterSpacing: 1,
   },
-
   inputContainer: {
     flexDirection: "row",
     alignItems: "center",
@@ -473,11 +452,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 15,
   },
-
   inputIcon: {
     marginRight: 10,
   },
-
   searchInput: {
     flex: 1,
     color: "white",
@@ -485,7 +462,6 @@ const styles = StyleSheet.create({
     paddingVertical: 15,
     fontWeight: "bold",
   },
-
   deleteAccountButton: {
     marginTop: 40,
     marginBottom: 20,
@@ -497,19 +473,16 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: "rgba(239, 68, 68, 0.1)",
   },
-
   deleteAccountText: {
     color: "#EF4444",
     fontSize: 14,
     fontWeight: "bold",
     letterSpacing: 1,
   },
-
   termsContainer: {
     marginTop: 30,
     alignItems: "center",
   },
-
   termsText: {
     color: "#666",
     fontSize: 12,

@@ -53,13 +53,23 @@ export function useNearbyPlaces(
                         locationRestriction: {
                             circle: {
                                 center: { latitude, longitude },
-                                radius: radius, // Limita maximă e 50000
+                                radius: radius,
                             },
                         },
                     }),
                 });
 
                 const data = await response.json();
+
+                // 🚨 PRINDEM EROAREA DE LA GOOGLE ȘI O AFIȘĂM 🚨
+                if (data.error) {
+                    console.error("❌ Google Places API Error:", data.error.message);
+                    if (isMounted) {
+                        setError(data.error.message);
+                        setIsLoading(false);
+                    }
+                    return;
+                }
 
                 if (data.places && data.places.length > 0) {
                     processAndSetPlaces(data.places, searchType, isMounted);
@@ -77,6 +87,7 @@ export function useNearbyPlaces(
                 }
             }
         };
+
         const fetchPlacesTextFallback = async () => {
             let textQuery = 'gas station';
             if (searchType === 'ev') textQuery = 'EV charging station';
@@ -102,6 +113,15 @@ export function useNearbyPlaces(
                 });
 
                 const data = await response.json();
+
+                if (data.error) {
+                    console.error("❌ Google Fallback API Error:", data.error.message);
+                    if (isMounted) {
+                        setError(data.error.message);
+                        setIsLoading(false);
+                    }
+                    return;
+                }
 
                 if (data.places && data.places.length > 0) {
                     processAndSetPlaces(data.places, searchType, isMounted);

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { API_BASE_URL } from '@env';
+import { apiFetch } from '../services/api';
 import { useSettingsStore } from '../store/useSettingsStore';
 
 export interface DislikedArea {
@@ -18,10 +18,8 @@ export function useDislikedAreas() {
         if (!token) return;
         setIsLoading(true);
         try {
-            const response = await fetch(`${API_BASE_URL}/api/users/dislikes`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            const data = await response.json();
+            // apiFetch adaugă automat token-ul și parsează JSON-ul
+            const data = await apiFetch('/users/dislikes');
             if (data.dislikes) setDislikedAreas(data.dislikes);
         } catch (error) {
             console.error('Failed to fetch dislikes:', error);
@@ -37,20 +35,15 @@ export function useDislikedAreas() {
     const addDislike = async (latitude: number, longitude: number, reason: string) => {
         if (!token) return false;
         try {
-            const response = await fetch(`${API_BASE_URL}/api/users/dislikes`, {
+            await apiFetch('/users/dislikes', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
                 body: JSON.stringify({ latitude, longitude, reason })
             });
-            if (response.ok) {
-                fetchDislikes();
-                return true;
-            }
-            return false;
+            // Dacă apiFetch nu dă throw, înseamnă că request-ul a fost OK (status 200)
+            fetchDislikes();
+            return true;
         } catch (error) {
+            console.error('Failed to add dislike:', error);
             return false;
         }
     };
@@ -58,16 +51,13 @@ export function useDislikedAreas() {
     const removeDislike = async (id: string) => {
         if (!token) return false;
         try {
-            const response = await fetch(`${API_BASE_URL}/api/users/dislikes/${id}`, {
-                method: 'DELETE',
-                headers: { 'Authorization': `Bearer ${token}` }
+            await apiFetch(`/users/dislikes/${id}`, {
+                method: 'DELETE'
             });
-            if (response.ok) {
-                fetchDislikes();
-                return true;
-            }
-            return false;
+            fetchDislikes();
+            return true;
         } catch (error) {
+            console.error('Failed to remove dislike:', error);
             return false;
         }
     };

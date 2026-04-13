@@ -13,7 +13,7 @@ async def get_db_pool():
 
 async def fetch_history(pool, user_id: str, lat: float, lng: float) -> List[dict]:
     query = """
-        SELECT latitude, longitude 
+        SELECT ST_Y(location::geometry) AS latitude, ST_X(location::geometry) AS longitude 
         FROM location_history 
         WHERE user_id = $1 
           AND speed BETWEEN 30 AND 80
@@ -33,9 +33,9 @@ async def fetch_history(pool, user_id: str, lat: float, lng: float) -> List[dict
 
 async def fetch_exclusion_zones(pool, user_id: str) -> List[dict]:
     query = """
-        SELECT latitude, longitude FROM disliked_areas WHERE user_id = $1
+        SELECT ST_Y(location::geometry) AS latitude, ST_X(location::geometry) AS longitude FROM disliked_areas WHERE user_id = $1
         UNION ALL
-        SELECT latitude, longitude FROM events WHERE type IN ('pothole', 'accident', 'police')
+        SELECT ST_Y(location::geometry) AS latitude, ST_X(location::geometry) AS longitude FROM events WHERE event_type IN ('pothole', 'accident', 'police')
     """
     try:
         async with pool.acquire() as conn:

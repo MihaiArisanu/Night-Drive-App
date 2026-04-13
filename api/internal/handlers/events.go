@@ -65,13 +65,16 @@ func GetNearbyEventsHandler(database *sql.DB) http.HandlerFunc {
 		}
 
 		latStr := r.URL.Query().Get("lat")
+		lngStr := r.URL.Query().Get("lng")
+
+		log.Printf("🔍 Cerere nearby: lat='%s', lng='%s'", latStr, lngStr)
+
 		lat, err := strconv.ParseFloat(latStr, 64)
 		if err != nil {
 			http.Error(w, "Invalid 'lat' parameter", http.StatusBadRequest)
 			return
 		}
 
-		lngStr := r.URL.Query().Get("lng")
 		lng, err := strconv.ParseFloat(lngStr, 64)
 		if err != nil {
 			http.Error(w, "Invalid 'lng' parameter", http.StatusBadRequest)

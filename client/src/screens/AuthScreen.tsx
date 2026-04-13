@@ -30,20 +30,6 @@ export default function AuthScreen({ route, navigation }: any) {
             return;
         }
 
-        // bypass
-        if (isLogin && email.trim().toLowerCase() === 'john' && password === '123456789') {
-            const fakeToken = "bypass_dev_token_12345";
-            const fakeUserId = "john_dev_999";
-
-            await AuthStorage.saveToken(fakeToken);
-            useSettingsStore.getState().setToken(fakeToken);
-            useSettingsStore.getState().setUserId(fakeUserId);
-
-            navigation.replace('Main');
-            return;
-        }
-        // ==========================================
-
         setIsLoading(true);
 
         try {

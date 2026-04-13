@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import messaging from '@react-native-firebase/messaging';
-import { API_BASE_URL } from '@env';
+import { apiFetch } from '../services/api';
 import { useSettingsStore } from '../store/useSettingsStore';
 
 export function usePushNotifications() {
@@ -21,27 +21,24 @@ export function usePushNotifications() {
 
                     if (fcmToken) {
                         try {
-                            await fetch(`${API_BASE_URL}/api/users/fcm`, {
+                            await apiFetch('/users/fcm', {
                                 method: 'PUT',
-                                headers: {
-                                    'Content-Type': 'application/json',
-                                    'Authorization': `Bearer ${token}`
-                                },
                                 body: JSON.stringify({ token: fcmToken })
                             });
+                            console.log("🚀 FCM Token synced successfully!");
                         } catch (error) {
-                            console.log("Failed to sync FCM token:", error);
+                            console.log("❌ Failed to sync FCM token:", error);
                         }
                     }
                 }
             } catch (error) {
-                console.warn("Firebase Messaging setup skipped (likely missing google-services.json):", error);
+                console.warn("Firebase Messaging setup skipped:", error);
             }
         };
 
         setupNotifications();
 
-        let unsubscribe = () => {};
+        let unsubscribe = () => { };
         try {
             unsubscribe = messaging().onMessage(async remoteMessage => {
                 console.log('New notification in foreground:', remoteMessage);

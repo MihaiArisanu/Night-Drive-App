@@ -16,23 +16,26 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
         ...options.headers,
     };
 
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    const url = `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`;
+
+    console.log(`🚀 Trimit cerere la: ${url}`);
+
+    const response = await fetch(url, {
         ...options,
         headers,
     });
 
+    const responseText = await response.text();
+    console.log(`📥 Serverul a răspuns cu: ${responseText}`);
+
     if (!response.ok) {
-        const errorText = await response.text();
-        let errorMessage = errorText;
-
-        try {
-            const errorJson = JSON.parse(errorText);
-            errorMessage = errorJson.message || errorText;
-        } catch (e) {
-        }
-
-        throw new Error(errorMessage || 'Error from NightDrive server');
+        throw new Error(responseText || 'Error from NightDrive server');
     }
 
-    return response.json();
+    try {
+        return JSON.parse(responseText);
+    } catch (e) {
+        console.error("❌ Eroare la parsare JSON. Serverul a trimis text, nu obiect.");
+        throw new Error("Serverul nu a trimis un format JSON valid.");
+    }
 };
