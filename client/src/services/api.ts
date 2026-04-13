@@ -16,7 +16,8 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
         ...options.headers,
     };
 
-    const url = `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`;
+    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
+    const url = `${API_BASE_URL}/api${cleanEndpoint}`;
 
     console.log(`🚀 Trimit cerere la: ${url}`);
 

@@ -24,35 +24,53 @@ export default function EditProfileScreen({ navigation }: any) {
         if (currentUser) {
             setName(currentUser.name);
             setEmail(currentUser.email);
-            // Dacă ai un avatar URL în viitor din backend, îl setezi aici
-            // setPhotoUri(currentUser.avatarUrl);
         }
     }, [currentUser]);
 
     const handleSave = async () => {
         setIsSaving(true);
         try {
-            const response = await fetch(`${API_BASE_URL}/api/users/profile`, {
+            const profileResponse = await fetch(`${API_BASE_URL}/users/profile`, {
                 method: 'PATCH',
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${token}`
                 },
-                body: JSON.stringify({
-                    name: name,
-                    email: email,
-                }),
+                body: JSON.stringify({ name, email }),
             });
 
-            // TODO pe viitor: Dacă photoUri s-a schimbat, vom face un fetch separat 
-            // cu FormData pentru a uploada poza pe serverul de Go!
+            if (photoUri && !photoUri.startsWith('http')) {
+                const formData = new FormData();
 
-            if (response.ok) {
-                await refetchUser();
-                navigation.goBack();
+                const uriParts = photoUri.split('.');
+                const fileType = uriParts[uriParts.length - 1];
+
+                formData.append('avatar', {
+                    uri: Platform.OS === 'ios' ? photoUri.replace('file://', '') : photoUri,
+                    name: `photo.${fileType}`,
+                    type: `image/${fileType}`,
+                } as any);
+
+                const uploadResponse = await fetch(`${API_BASE_URL}/users/avatar`, {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: formData,
+                });
+
+                if (!uploadResponse.ok) {
+                    const errText = await uploadResponse.text();
+                    console.error("Eroare la upload poză:", errText);
+                }
             }
+
+            await refetchUser();
+            navigation.goBack();
+
         } catch (error) {
-            console.error(error);
+            console.error("Eroare la salvare:", error);
         } finally {
             setIsSaving(false);
         }
@@ -216,7 +234,6 @@ const styles = StyleSheet.create({
     input: { flex: 1, color: "white", fontSize: 16, paddingVertical: 15, fontWeight: "500" },
     saveButton: { width: "100%", marginTop: 10, paddingVertical: 15 },
 
-    // Stiluri Modal
     modalOverlay: { flex: 1, backgroundColor: "rgba(0, 0, 0, 0.7)", justifyContent: "flex-end" },
     modalContent: { backgroundColor: "#111", borderTopLeftRadius: 25, borderTopRightRadius: 25, padding: 25, paddingBottom: 40, borderWidth: 1, borderColor: "#333" },
     modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 20 },

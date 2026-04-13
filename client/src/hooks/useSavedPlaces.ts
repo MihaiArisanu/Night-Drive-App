@@ -49,5 +49,19 @@ export function useSavedPlaces() {
         }
     };
 
-    return { savedPlaces, isLoadingPlaces: isLoading, savePlace };
+    const deletePlace = async (id: string) => {
+        if (!token) return false;
+        try {
+            await apiFetch(`/users/places/${id}`, {
+                method: 'DELETE'
+            });
+            await fetchSavedPlaces();
+            return true;
+        } catch (error) {
+            console.error('Failed to delete place:', error);
+            return false;
+        }
+    };
+
+    return { savedPlaces, isLoadingPlaces: isLoading, savePlace, deletePlace };
 }

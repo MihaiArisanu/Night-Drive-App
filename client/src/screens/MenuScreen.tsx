@@ -114,14 +114,20 @@ export default function MenuScreen({ navigation }: any) {
             </View>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.menuItem}>
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => navigation.navigate("SavedPlaces")}
+          >
             <View style={styles.menuItemLeft}>
               <Bookmark color="#A855F7" size={24} />
               <Text style={styles.menuItemText}>SAVED PLACES</Text>
             </View>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.menuItem}>
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => navigation.navigate("DislikedStreets")}
+          >
             <View style={styles.menuItemLeft}>
               <MapPinOff color="#A855F7" size={24} />
               <Text style={styles.menuItemText}>DISLIKED STREETS</Text>

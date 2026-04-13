@@ -8,6 +8,8 @@ import MainScreen from './src/screens/MainScreen';
 import PermissionErrorScreen from './src/screens/PermissionDeniedScreen';
 import MenuScreen from './src/screens/MenuScreen';
 import EditProfileScreen from './src/screens/EditProfileScreen';
+import SavedPlacesScreen from './src/screens/SavedPlacesScreen';
+import DislikedStreetsScreen from './src/screens/DislikedStreetsScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -26,6 +28,8 @@ export default function App() {
         <Stack.Screen name="Welcome" component={WelcomeScreen} />
         <Stack.Screen name="Auth" component={AuthScreen} />
         <Stack.Screen name="EditProfile" component={EditProfileScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="SavedPlaces" component={SavedPlacesScreen} />
+        <Stack.Screen name="DislikedStreets" component={DislikedStreetsScreen} />
         <Stack.Screen name="Main" component={MainScreen} />
         <Stack.Screen
           name="Menu"

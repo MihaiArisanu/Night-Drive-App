@@ -61,9 +61,13 @@ func main() {
 	mux.HandleFunc("/api/routes/zen/stop", handlers.RequireAuth(handlers.StopZenModeHandler(rdb)))
 	mux.HandleFunc("/api/routes/zen/sync", handlers.RequireAuth(handlers.SyncZenLocationHandler(rdb)))
 
+	mux.HandleFunc("/api/users/fcm", handlers.RequireAuth(handlers.UpdateFCMTokenHandler(database)))
+
 	mux.HandleFunc("/api/ws", func(w http.ResponseWriter, r *http.Request) {
 		handlers.ServeWS(hub, w, r)
 	})
+
+	mux.HandleFunc("/api/users/avatar", handlers.RequireAuth(handlers.UploadAvatarHandler(database)))
 
 	port := ":8080"
 	log.Printf("Starting backend server on http://192.168.100.225%s\n", port)

@@ -18,7 +18,6 @@ export function useDislikedAreas() {
         if (!token) return;
         setIsLoading(true);
         try {
-            // apiFetch adaugă automat token-ul și parsează JSON-ul
             const data = await apiFetch('/users/dislikes');
             if (data.dislikes) setDislikedAreas(data.dislikes);
         } catch (error) {
@@ -39,7 +38,6 @@ export function useDislikedAreas() {
                 method: 'POST',
                 body: JSON.stringify({ latitude, longitude, reason })
             });
-            // Dacă apiFetch nu dă throw, înseamnă că request-ul a fost OK (status 200)
             fetchDislikes();
             return true;
         } catch (error) {
