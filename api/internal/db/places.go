@@ -6,7 +6,7 @@ import (
 	"github.com/MihaiArisanu/nightdrive-backend/internal/models"
 )
 
-func GetSavedPlaces(dbConn *sql.DB, userID string) ([]models.Place, error) {
+func GetSavedPlaces(dbConn *sql.DB, userID string) ([]models.PlaceResponse, error) {
 	query := `
 		SELECT id, name, ST_Y(location::geometry) as latitude, ST_X(location::geometry) as longitude
 		FROM saved_places
@@ -19,9 +19,9 @@ func GetSavedPlaces(dbConn *sql.DB, userID string) ([]models.Place, error) {
 	}
 	defer rows.Close()
 
-	places := []models.Place{}
+	places := []models.PlaceResponse{}
 	for rows.Next() {
-		var p models.Place
+		var p models.PlaceResponse
 		if err := rows.Scan(&p.ID, &p.Name, &p.Latitude, &p.Longitude); err == nil {
 			places = append(places, p)
 		}

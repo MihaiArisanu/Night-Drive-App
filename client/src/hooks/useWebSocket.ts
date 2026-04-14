@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import Toast from 'react-native-toast-message';
 import { API_BASE_URL } from '@env';
 import { useSettingsStore } from '../store/useSettingsStore';
 
@@ -71,4 +72,46 @@ export function useWebSocket(
     }, [token, groupId, onInviteReceived, onVoiceReceived, setGroupDestination, setRendezvousPoint]);
 
     return { ws: ws.current };
+}
+
+export function useGroupStopListener(socket: WebSocket | null) {
+    const { activeGroupId, setGroupStop } = useSettingsStore();
+
+    useEffect(() => {
+        if (!socket) return;
+
+        const handleWebSocketMessage = (event: WebSocketMessageEvent) => {
+            try {
+                const data = JSON.parse(event.data);
+
+                if (data.type === 'group_stop_added') {
+
+                    if (data.group_id === activeGroupId) {
+                        console.log("Nouă oprire de grup primită:", data.payload);
+                        setGroupStop({
+                            latitude: data.payload.latitude,
+                            longitude: data.payload.longitude,
+                            name: data.payload.name
+                        });
+
+                        Toast.show({
+                            type: 'info',
+                            text1: 'Route Updated! 🛑',
+                            text2: `${data.payload.name} added as a group stop.`,
+                            position: 'top',
+                            visibilityTime: 4000,
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error("Eroare la parsarea mesajului WS:", error);
+            }
+        };
+
+        socket.addEventListener('message', handleWebSocketMessage);
+
+        return () => {
+            socket.removeEventListener('message', handleWebSocketMessage);
+        };
+    }, [socket, activeGroupId]);
 }

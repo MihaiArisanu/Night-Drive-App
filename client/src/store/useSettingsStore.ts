@@ -28,6 +28,7 @@ interface SettingsState {
     pendingGroupInvites: GroupInvite[];
     groupDestination: LocationPoint | null;
     rendezvousPoint: LocationPoint | null;
+    groupStop: LocationPoint | null;
 
     setIsDNDActive: (value: boolean) => void;
     setUserId: (value: string | null) => void;
@@ -38,6 +39,7 @@ interface SettingsState {
     setPendingGroupInvites: (value: GroupInvite[]) => void;
     setGroupDestination: (value: LocationPoint | null) => void;
     setRendezvousPoint: (value: LocationPoint | null) => void;
+    setGroupStop: (value: LocationPoint | null) => void;
 
     clearSettings: () => void;
 }
@@ -52,6 +54,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     pendingGroupInvites: [],
     groupDestination: null,
     rendezvousPoint: null,
+    groupStop: null,
 
     setIsDNDActive: (value) => set({ isDNDActive: value }),
     setUserId: (value) => set({ userId: value }),
@@ -62,9 +65,10 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     setPendingGroupInvites: (value) => set({ pendingGroupInvites: value }),
     setGroupDestination: (value) => set({ groupDestination: value }),
     setRendezvousPoint: (value) => set({ rendezvousPoint: value }),
+    setGroupStop: (value) => set({ groupStop: value }),
 
     clearSettings: () => set({
         userId: null, userName: null, token: null, activeGroupId: null,
-        groupMembers: [], pendingGroupInvites: [], groupDestination: null, rendezvousPoint: null
+        groupMembers: [], pendingGroupInvites: [], groupDestination: null, rendezvousPoint: null, groupStop: null
     }),
 }));

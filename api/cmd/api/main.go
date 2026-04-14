@@ -52,16 +52,18 @@ func main() {
 	mux.HandleFunc("/api/friends/nearby", handlers.RequireAuth(handlers.GetNearbyFriendsHandler(database)))
 	mux.HandleFunc("/api/voice/upload", handlers.RequireAuth(handlers.UploadVoiceHandler(hub)))
 	mux.HandleFunc("/api/users/places", handlers.RequireAuth(handlers.PlacesHandler(database)))
+	mux.HandleFunc("/api/users/dislikes", handlers.RequireAuth(handlers.DislikesHandler(database)))
+	mux.HandleFunc("/api/users/dislikes/{id}", handlers.RequireAuth(handlers.DislikeByIDHandler(database)))
 
 	mux.HandleFunc("/api/locations/history", handlers.RequireAuth(handlers.LocationHistoryHandler(database)))
-	mux.HandleFunc("/api/users/dislikes", handlers.RequireAuth(handlers.DislikedAreasHandler(database)))
-	mux.HandleFunc("/api/users/dislikes/", handlers.RequireAuth(handlers.DislikedAreasHandler(database)))
 
 	mux.HandleFunc("/api/routes/zen/start", handlers.RequireAuth(handlers.StartZenModeHandler(rdb)))
 	mux.HandleFunc("/api/routes/zen/stop", handlers.RequireAuth(handlers.StopZenModeHandler(rdb)))
 	mux.HandleFunc("/api/routes/zen/sync", handlers.RequireAuth(handlers.SyncZenLocationHandler(rdb)))
 
 	mux.HandleFunc("/api/users/fcm", handlers.RequireAuth(handlers.UpdateFCMTokenHandler(database)))
+
+	mux.HandleFunc("/api/groups/{id}/stop", handlers.RequireAuth(handlers.AddGroupStopHandler(database, hub)))
 
 	mux.HandleFunc("/api/ws", func(w http.ResponseWriter, r *http.Request) {
 		handlers.ServeWS(hub, w, r)

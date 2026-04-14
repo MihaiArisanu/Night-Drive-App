@@ -1,46 +1,41 @@
 import React, { useEffect } from 'react';
-import { View, Text, StyleSheet, Image, Platform, PermissionsAndroid } from 'react-native';
-import Geolocation from 'react-native-geolocation-service';
+import { View, Text, StyleSheet, Platform, PermissionsAndroid } from 'react-native';
+import Video from 'react-native-video';
 import { AuthStorage } from '../services/api';
 import { useSettingsStore } from '../store/useSettingsStore';
 
 export default function SplashScreen({ navigation }: any) {
     useEffect(() => {
-        const checkPermissionsAndAuth = async () => {
-            let locationGranted = false;
+        const bootApp = async () => {
+            try {
+                const token = await AuthStorage.getToken();
 
-            if (Platform.OS === 'android') {
-                const granted = await PermissionsAndroid.request(
-                    PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
-                );
-                locationGranted = granted === PermissionsAndroid.RESULTS.GRANTED;
-            } else if (Platform.OS === 'ios') {
-                const auth = await Geolocation.requestAuthorization('whenInUse');
-                locationGranted = auth === 'granted';
-            }
-
-            if (!locationGranted) {
-                navigation.replace('PermissionError');
-                return;
-            }
-
-            const token = await AuthStorage.getToken();
-            if (token) {
-                useSettingsStore.getState().setToken(token);
-                navigation.replace('Main');
-            } else {
+                if (token) {
+                    useSettingsStore.getState().setToken(token);
+                    navigation.replace('Main');
+                } else {
+                    navigation.replace('Onboarding');
+                }
+            } catch (error) {
+                console.error("Eroare la bootare:", error);
                 navigation.replace('Welcome');
             }
         };
 
         setTimeout(() => {
-            checkPermissionsAndAuth();
-        }, 1500);
+            bootApp();
+        }, 5500);
     }, []);
 
     return (
         <View style={styles.container}>
-            <Image source={require('../assets/logo.png')} style={styles.logo} resizeMode="contain" />
+            <Video
+                source={require('../assets/Logo_animation.mp4')}
+                style={styles.videoLogo}
+                muted={true}
+                repeat={false}
+                resizeMode="contain"
+            />
             <Text style={styles.appName}>NightDrive</Text>
         </View>
     );
@@ -53,10 +48,10 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center'
     },
-    logo: {
-        width: 150,
-        height: 150,
-        marginBottom: 20
+    videoLogo: {
+        width: 250,
+        height: 250,
+        marginBottom: 10
     },
     appName: {
         color: '#8A2BE2',

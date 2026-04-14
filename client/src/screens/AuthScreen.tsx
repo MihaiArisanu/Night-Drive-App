@@ -60,8 +60,36 @@ export default function AuthScreen({ route, navigation }: any) {
                 setPassword('');
                 setUsername('');
             }
-        } catch (error: any) {
-            Alert.alert('Authentication Error', error.message);
+        } catch (error: unknown) {
+            let errorMsg = "An unknown error occurred.";
+            if (error instanceof Error) {
+                errorMsg = error.message;
+            } else if (typeof error === 'string') {
+                errorMsg = error;
+            }
+
+            const lowerError = errorMsg.toLowerCase();
+
+            if (lowerError.includes('network request failed') || lowerError.includes('fetch failed')) {
+                errorMsg = "Network request failed. Please check your connection.";
+            }
+
+            else if (isLogin) {
+                if (lowerError.includes('password') || lowerError.includes('credential') || lowerError.includes('invalid')) {
+                    errorMsg = "Password wrong";
+                }
+                else if (lowerError.includes('not found') || lowerError.includes('exist') || lowerError.includes('no user') || lowerError.includes('no rows')) {
+                    errorMsg = "This email does not exist in the Night Drive Database.";
+                }
+            }
+
+            else if (!isLogin) {
+                if (lowerError.includes('exist') || lowerError.includes('duplicate') || lowerError.includes('already') || lowerError.includes('unique')) {
+                    errorMsg = "This email is already registered. Please log in.";
+                }
+            }
+
+            Alert.alert('Authentication Error', errorMsg);
         } finally {
             setIsLoading(false);
         }
@@ -101,7 +129,7 @@ export default function AuthScreen({ route, navigation }: any) {
 
                     <TextInput
                         style={styles.input}
-                        placeholder="Email (or 'john' for bypass)"
+                        placeholder="Email or your code"
                         placeholderTextColor="#888"
                         value={email}
                         onChangeText={setEmail}

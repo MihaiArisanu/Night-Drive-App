@@ -1,22 +1,27 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Keyboard, ScrollView, ActivityIndicator, Modal } from 'react-native';
 import { Search, X, MapPin, Zap, Fuel, Star, Bookmark } from 'lucide-react-native';
-import { GooglePlacesAutocomplete } from 'react-native-google-places-autocomplete';
+import { GooglePlacesAutocomplete, GooglePlacesAutocompleteRef } from 'react-native-google-places-autocomplete';
 import { GOOGLE_API_GENERAL_KEY } from '@env';
 import { useLocation } from '../hooks/useLocation';
 import { useNearbyPlaces, PlaceResult } from '../hooks/useNearbyPlaces';
 import { useSavedPlaces } from '../hooks/useSavedPlaces';
 
-interface SearchBarProps {
+export interface SearchBarProps {
     onClose: () => void;
-    onPlaceSelect: (coords: { latitude: number; longitude: number }, name: string) => void;
+    onPlaceSelect: (coords: { latitude: number; longitude: number }, name: string, city?: string) => void;
+    searchFilter?: 'address' | 'establishment' | 'geocode' | 'regions' | 'cities';
+    placeholder?: string;
+    isCompact?: boolean;
 }
 
 type SearchTab = 'none' | 'gas' | 'ev' | 'gas_ev' | 'saved';
 
-export function SearchBar({ onClose, onPlaceSelect }: SearchBarProps) {
+export function SearchBar({ onClose, onPlaceSelect, searchFilter, placeholder = "Where do you want to go?", isCompact = false }: SearchBarProps) {
     const [activeTab, setActiveTab] = useState<SearchTab>('none');
     const { coords } = useLocation();
+
+    const googleRef = useRef<GooglePlacesAutocompleteRef>(null);
 
     const { places, isLoading, error } = useNearbyPlaces(coords?.latitude || 0, coords?.longitude || 0, activeTab);
     const { savedPlaces, isLoadingPlaces, savePlace } = useSavedPlaces();
@@ -35,12 +40,15 @@ export function SearchBar({ onClose, onPlaceSelect }: SearchBarProps) {
         }
     };
 
+    const handleClearAndClose = () => {
+        googleRef.current?.clear();
+        onClose();
+    };
+
     const handleConfirmSave = async () => {
         if (!placeToSave) return;
         setIsSaving(true);
-
         const success = await savePlace(placeToSave.name, placeToSave.lat, placeToSave.lng);
-
         setIsSaving(false);
         if (success) {
             setPlaceToSave(null);
@@ -51,7 +59,6 @@ export function SearchBar({ onClose, onPlaceSelect }: SearchBarProps) {
 
     const renderPlaceItem = (place: PlaceResult) => {
         const isEV = activeTab === 'ev' || (activeTab === 'gas_ev' && place.name.toLowerCase().includes('charge'));
-
         return (
             <TouchableOpacity
                 key={place.id}
@@ -63,14 +70,8 @@ export function SearchBar({ onClose, onPlaceSelect }: SearchBarProps) {
                 </View>
                 <View style={styles.placeDetails}>
                     <View style={styles.placeHeader}>
-                        <Text style={[styles.placeName, place.isSponsored && styles.sponsoredText]} numberOfLines={1}>
-                            {place.name}
-                        </Text>
-                        {place.hasHydrogen && (
-                            <View style={styles.hydrogenBadge}>
-                                <Text style={styles.hydrogenText}>H2</Text>
-                            </View>
-                        )}
+                        <Text style={[styles.placeName, place.isSponsored && styles.sponsoredText]} numberOfLines={1}>{place.name}</Text>
+                        {place.hasHydrogen && <View style={styles.hydrogenBadge}><Text style={styles.hydrogenText}>H2</Text></View>}
                     </View>
                     <Text style={styles.placeAddress} numberOfLines={1}>{place.address}</Text>
                     {place.isSponsored && <Text style={styles.sponsoredLabel}>Sponsored by Partner</Text>}
@@ -96,26 +97,26 @@ export function SearchBar({ onClose, onPlaceSelect }: SearchBarProps) {
     );
 
     return (
-        <View style={styles.container}>
-            <View style={styles.filterContainer}>
-                <TouchableOpacity style={[styles.filterBtn, (activeTab === 'gas' || activeTab === 'gas_ev') && styles.filterBtnActive]} onPress={() => handleTabPress('gas')}>
-                    <Text style={[styles.filterBtnText, (activeTab === 'gas' || activeTab === 'gas_ev') && styles.filterBtnTextActive]}>⛽ Gas</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.filterBtn, (activeTab === 'ev' || activeTab === 'gas_ev') && styles.filterBtnActive]} onPress={() => handleTabPress('ev')}>
-                    <Text style={[styles.filterBtnText, (activeTab === 'ev' || activeTab === 'gas_ev') && styles.filterBtnTextActive]}>⚡ EV</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.filterBtn, activeTab === 'saved' && styles.filterBtnActive]} onPress={() => handleTabPress('saved')}>
-                    <Text style={[styles.filterBtnText, activeTab === 'saved' && styles.filterBtnTextActive]}>⭐ Saved</Text>
-                </TouchableOpacity>
-            </View>
+        <View style={[styles.container, isCompact && { flex: 0, zIndex: 100 }]}>
+            {!isCompact && (
+                <View style={styles.filterContainer}>
+                    <TouchableOpacity style={[styles.filterBtn, (activeTab === 'gas' || activeTab === 'gas_ev') && styles.filterBtnActive]} onPress={() => handleTabPress('gas')}>
+                        <Text style={[styles.filterBtnText, (activeTab === 'gas' || activeTab === 'gas_ev') && styles.filterBtnTextActive]}>⛽ Gas</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.filterBtn, (activeTab === 'ev' || activeTab === 'gas_ev') && styles.filterBtnActive]} onPress={() => handleTabPress('ev')}>
+                        <Text style={[styles.filterBtnText, (activeTab === 'ev' || activeTab === 'gas_ev') && styles.filterBtnTextActive]}>⚡ EV</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.filterBtn, activeTab === 'saved' && styles.filterBtnActive]} onPress={() => handleTabPress('saved')}>
+                        <Text style={[styles.filterBtnText, activeTab === 'saved' && styles.filterBtnTextActive]}>⭐ Saved</Text>
+                    </TouchableOpacity>
+                </View>
+            )}
 
-            {activeTab !== 'none' ? (
+            {!isCompact && activeTab !== 'none' ? (
                 <View style={styles.resultsContainer}>
                     {activeTab === 'saved' ? (
                         isLoadingPlaces ? (
-                            <View style={styles.centerContent}>
-                                <ActivityIndicator size="large" color="#F59E0B" />
-                            </View>
+                            <View style={styles.centerContent}><ActivityIndicator size="large" color="#F59E0B" /></View>
                         ) : savedPlaces.length === 0 ? (
                             <View style={styles.centerContent}>
                                 <Star color="#F59E0B" size={48} style={{ marginBottom: 10, opacity: 0.5 }} />
@@ -123,9 +124,7 @@ export function SearchBar({ onClose, onPlaceSelect }: SearchBarProps) {
                                 <Text style={styles.emptyStateSubtext}>Search for a place to save it.</Text>
                             </View>
                         ) : (
-                            <ScrollView keyboardShouldPersistTaps="handled">
-                                {savedPlaces.map(renderSavedItem)}
-                            </ScrollView>
+                            <ScrollView keyboardShouldPersistTaps="handled">{savedPlaces.map(renderSavedItem)}</ScrollView>
                         )
                     ) : (
                         isLoading ? (
@@ -134,49 +133,47 @@ export function SearchBar({ onClose, onPlaceSelect }: SearchBarProps) {
                                 <Text style={styles.loadingText}>Searching nearby...</Text>
                             </View>
                         ) : error ? (
-                            <View style={styles.centerContent}>
-                                <Text style={styles.errorText}>{error}</Text>
-                            </View>
+                            <View style={styles.centerContent}><Text style={styles.errorText}>{error}</Text></View>
                         ) : (
-                            <ScrollView keyboardShouldPersistTaps="handled">
-                                {places.map(renderPlaceItem)}
-                            </ScrollView>
+                            <ScrollView keyboardShouldPersistTaps="handled">{places.map(renderPlaceItem)}</ScrollView>
                         )
                     )}
                 </View>
             ) : (
                 <GooglePlacesAutocomplete
-                    placeholder="Where do you want to go?"
+                    ref={googleRef}
+                    placeholder={placeholder}
                     onPress={(data, details = null) => {
                         if (details && details.geometry) {
+                            const city = data.structured_formatting?.secondary_text || "";
+                            const name = data.structured_formatting ? data.structured_formatting.main_text : data.description;
+
+                            googleRef.current?.clear();
+                            Keyboard.dismiss();
+
                             onPlaceSelect(
                                 { latitude: details.geometry.location.lat, longitude: details.geometry.location.lng },
-                                data.description
+                                name,
+                                city
                             );
-                        } else {
-
-                            console.warn("Google API did not return geometry details.");
                         }
                     }}
                     onFail={(error) => console.error("❌ EROARE GOOGLE PLACES:", error)}
                     query={{
-                        key: "AIzaSyA0u4QkWl5ZVC53zbFIu5Gfio-gS-7-6ds",
-                        language: "en",
-                        components: "country:ro"
+                        key: GOOGLE_API_GENERAL_KEY,
+                        language: "ro",
+                        components: "country:ro",
+                        ...(searchFilter ? { types: searchFilter } : {})
                     }}
                     fetchDetails={true}
                     enablePoweredByContainer={false}
-                    styles={searchBarStyles}
-                    textInputProps={{ placeholderTextColor: "#888", autoFocus: true }}
+                    styles={isCompact ? compactSearchBarStyles : searchBarStyles}
+                    textInputProps={{ placeholderTextColor: "#888", autoFocus: !isCompact }}
                     renderLeftButton={() => (
-                        <View style={styles.iconPadding}>
-                            <Search color="#888" size={20} />
-                        </View>
+                        <View style={styles.iconPadding}><Search color="#888" size={20} /></View>
                     )}
                     renderRightButton={() => (
-                        <TouchableOpacity onPress={onClose} style={styles.iconPadding}>
-                            <X color="#888" size={24} />
-                        </TouchableOpacity>
+                        <TouchableOpacity onPress={handleClearAndClose} style={styles.iconPadding}><X color="#888" size={24} /></TouchableOpacity>
                     )}
                     renderRow={(data) => (
                         <View style={styles.resultRow}>
@@ -186,43 +183,6 @@ export function SearchBar({ onClose, onPlaceSelect }: SearchBarProps) {
                     )}
                 />
             )}
-
-            <Modal visible={!!placeToSave} transparent={true} animationType="fade">
-                <View style={styles.modalOverlay}>
-                    <View style={styles.modalContent}>
-                        <View style={styles.modalIconBox}>
-                            <Star color="#F59E0B" size={32} fill="#F59E0B" />
-                        </View>
-                        <Text style={styles.modalTitle}>Save Location?</Text>
-                        <Text style={styles.modalAddress} numberOfLines={2}>
-                            {placeToSave?.name}
-                        </Text>
-
-                        <View style={styles.modalButtons}>
-                            <TouchableOpacity
-                                style={styles.modalCancelBtn}
-                                onPress={() => setPlaceToSave(null)}
-                                disabled={isSaving}
-                            >
-                                <Text style={styles.modalCancelText}>Cancel</Text>
-                            </TouchableOpacity>
-
-                            <TouchableOpacity
-                                style={styles.modalSaveBtn}
-                                onPress={handleConfirmSave}
-                                disabled={isSaving}
-                            >
-                                {isSaving ? (
-                                    <ActivityIndicator color="#000" size="small" />
-                                ) : (
-                                    <Text style={styles.modalSaveText}>Save Place</Text>
-                                )}
-                            </TouchableOpacity>
-                        </View>
-                    </View>
-                </View>
-            </Modal>
-
         </View>
     );
 }
@@ -379,76 +339,11 @@ const styles = StyleSheet.create({
         fontSize: 10,
         fontWeight: 'bold'
     },
-
-    modalOverlay: {
-        flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.8)',
-        justifyContent: 'center',
-        alignItems: 'center'
-    },
-    modalContent: {
-        width: '85%',
-        backgroundColor: '#111',
-        borderRadius: 20,
-        padding: 25,
-        alignItems: 'center',
-        borderWidth: 1,
-        borderColor: '#333'
-    },
-    modalIconBox: {
-        width: 60,
-        height: 60,
-        borderRadius: 30,
-        backgroundColor: 'rgba(245, 158, 11, 0.1)',
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginBottom: 15
-    },
-    modalTitle: {
-        color: '#FFF',
-        fontSize: 20,
-        fontWeight: 'bold',
-        marginBottom: 10
-    },
-    modalAddress: {
-        color: '#888',
-        fontSize: 14,
-        textAlign: 'center',
-        marginBottom: 25
-    },
-    modalButtons: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        width: '100%',
-        gap: 15
-    },
-    modalCancelBtn: {
-        flex: 1,
-        paddingVertical: 12,
-        borderRadius: 10,
-        backgroundColor: '#222',
-        alignItems: 'center'
-    },
-    modalCancelText: {
-        color: '#FFF',
-        fontWeight: 'bold'
-    },
-    modalSaveBtn: {
-        flex: 1,
-        paddingVertical: 12,
-        borderRadius: 10,
-        backgroundColor: '#F59E0B',
-        alignItems: 'center'
-    },
-    modalSaveText: {
-        color: '#000',
-        fontWeight: 'bold'
-    },
 });
 
 const searchBarStyles = {
     container: {
-        flex: 1,
+        flex: 1
     },
     textInputContainer: {
         backgroundColor: "#111",
@@ -468,5 +363,48 @@ const searchBarStyles = {
         backgroundColor: "#000",
         borderBottomColor: "#222",
         borderBottomWidth: 0.5
+    },
+};
+
+const compactSearchBarStyles = {
+    container: {
+        flex: 0
+    },
+    textInputContainer: {
+        backgroundColor: "#111",
+        height: 50,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: "#222"
+    },
+    textInput: {
+        color: "#FFF",
+        fontSize: 16,
+        backgroundColor: "transparent",
+        margin: 0
+    },
+    listView: {
+        backgroundColor: "#111",
+        borderRadius: 12,
+        marginTop: 5,
+        borderWidth: 1,
+        borderColor: "#333",
+        zIndex: 1000,
+        position: 'absolute' as 'absolute',
+        top: 55,
+        width: '100%'
+    },
+    row: {
+        backgroundColor: "#111",
+        padding: 13,
+        height: 50,
+        borderBottomWidth: 1,
+        borderBottomColor: '#222'
+    },
+    description: {
+        color: '#CCC'
+    },
+    separator: {
+        backgroundColor: 'transparent'
     },
 };

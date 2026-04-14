@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
-import { View, Text, TouchableOpacity, Keyboard, Platform, PermissionsAndroid, StyleSheet, Modal } from "react-native";
+import { View, Text, TouchableOpacity, Keyboard, Platform, PermissionsAndroid, StyleSheet, Modal, Animated, PanResponder } from "react-native";
 import MapView, { PROVIDER_GOOGLE, Marker, Circle, Polyline } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Search, MapPin, Navigation, Users, LocateFixed } from "lucide-react-native";
+import { Search, MapPin, Navigation, Users, LocateFixed, Map, XCircle } from "lucide-react-native";
 import Geolocation from "react-native-geolocation-service";
 import MapViewDirections from 'react-native-maps-directions';
 import { useKeepAwake } from '@sayem314/react-native-keep-awake';
@@ -15,7 +15,8 @@ import { TopBar } from "../components/TopBar";
 import { RideInviteSheet } from '../components/RideInviteSheet';
 import { SearchBar } from '../components/SearchBar';
 
-import { API_BASE_URL } from '@env';
+import { apiFetch } from '../services/api';
+import { API_BASE_URL, GOOGLE_API_GENERAL_KEY } from '@env';
 
 import { useLocation } from '../hooks/useLocation';
 import { useDeadReckoning } from '../hooks/useDeadReckoning';
@@ -24,7 +25,7 @@ import { useReporting } from '../hooks/useReporting';
 import { useNearbyEvents } from '../hooks/useNearbyEvents';
 import { useNearbyFriends } from '../hooks/useNearbyFriends';
 import { useRideInvite } from '../hooks/useRideInvite';
-import { useWebSocket } from '../hooks/useWebSocket';
+import { useWebSocket, useGroupStopListener } from '../hooks/useWebSocket';
 import { useLocationBroadcaster } from '../hooks/useLocationBroadcaster';
 import { useDislikedAreas } from '../hooks/useDislikedAreas';
 import { useTelemetry } from '../hooks/useTelemetry';
@@ -35,7 +36,7 @@ import { decodePolyline } from '../utils/polyline';
 
 import { useSettingsStore } from '../store/useSettingsStore';
 
-const GOOGLE_API_KEY = "AIzaSyA0u4QkWl5ZVC53zbFIu5Gfio-gS-7-6ds";
+const GOOGLE_API_KEY = GOOGLE_API_GENERAL_KEY;
 
 interface InviteData {
   friendName: string;
@@ -52,9 +53,15 @@ export default function MainScreen() {
   useKeepAwake();
 
   const { activeCoords, isSimulating } = useDeadReckoning(coords, speedMs, heading);
+
   const [destination, setDestination] = useState<{ latitude: number, longitude: number } | null>(null);
+  const [stopDestination, setStopDestination] = useState<{ latitude: number, longitude: number } | null>(null);
   const [routeCoordinates, setRouteCoordinates] = useState<{ latitude: number, longitude: number }[]>([]);
   const [isNavigating, setIsNavigating] = useState(false);
+
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchSessionId, setSearchSessionId] = useState(0);
+  const [pendingSearch, setPendingSearch] = useState<{ coords: { latitude: number, longitude: number }, name: string } | null>(null);
 
   const [isZenSession, setIsZenSession] = useState(false);
   const [zenCoordinates, setZenCoordinates] = useState<{ latitude: number, longitude: number }[]>([]);
@@ -64,7 +71,7 @@ export default function MainScreen() {
   const [showRideInvite, setShowRideInvite] = useState(false);
   const [inviteData, setInviteData] = useState<InviteData | null>(null);
 
-  const { isDNDActive, userId, userName, activeGroupId, groupDestination, rendezvousPoint, setActiveGroupId, token } = useSettingsStore();
+  const { isDNDActive, userId, userName, activeGroupId, groupDestination, groupStop, rendezvousPoint, setActiveGroupId, token } = useSettingsStore();
 
   const { submitReport, isSubmitting } = useReporting();
   const { events, refetchEvents } = useNearbyEvents(activeCoords.latitude || 44.4268, activeCoords.longitude || 26.1025);
@@ -85,8 +92,6 @@ export default function MainScreen() {
   } = useRerouting(activeCoords, routeCoordinates, isNavigating, 50);
 
   const [isModalVisible, setModalVisible] = useState(false);
-  const [isSearching, setIsSearching] = useState(false);
-  const [searchSessionId, setSearchSessionId] = useState(0);
   const [region, setRegion] = useState({
     latitude: 44.4268,
     longitude: 26.1025,
@@ -95,7 +100,39 @@ export default function MainScreen() {
   });
 
   const currentDestination = groupDestination || destination;
-  const currentWaypoints = rendezvousPoint && groupDestination ? [rendezvousPoint] : undefined;
+
+  const currentWaypoints = [];
+  if (rendezvousPoint && groupDestination) currentWaypoints.push(rendezvousPoint);
+  if (groupStop) currentWaypoints.push(groupStop);
+  if (stopDestination) currentWaypoints.push(stopDestination);
+
+  const panY = useRef(new Animated.Value(0)).current;
+  const cancelThreshold = -120;
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gestureState) => Math.abs(gestureState.dy) > 10,
+      onPanResponderMove: (_, gestureState) => {
+        if (gestureState.dy < 0) {
+          panY.setValue(gestureState.dy);
+        }
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.dy < cancelThreshold) {
+          cancelNavigation();
+          Animated.timing(panY, { toValue: 0, duration: 200, useNativeDriver: true }).start();
+        } else {
+          Animated.spring(panY, { toValue: 0, useNativeDriver: true }).start();
+        }
+      }
+    })
+  ).current;
+
+  const cancelOpacity = panY.interpolate({
+    inputRange: [cancelThreshold, 0],
+    outputRange: [1, 0],
+    extrapolate: 'clamp'
+  });
 
   const handleIncomingInvite = (data: InviteData) => {
     if (isDNDActive) {
@@ -104,6 +141,10 @@ export default function MainScreen() {
     setInviteData(data);
     setShowRideInvite(true);
   };
+
+  const { ws } = useWebSocket(token, activeGroupId, handleIncomingInvite, () => { });
+
+  useGroupStopListener(ws);
 
   useLocationBroadcaster(
     userId,
@@ -203,19 +244,18 @@ export default function MainScreen() {
 
   const cancelNavigation = () => {
     setDestination(null);
+    setStopDestination(null);
     resetRouteOrigin();
     setRouteCoordinates([]);
     setZenCoordinates([]);
+    setIsNavigating(false);
+    setIsSearching(false);
+    setSearchSessionId(prev => prev + 1);
 
     if (isZenSession) {
       setIsZenSession(false);
-      fetch(`${API_BASE_URL}/routes/zen/stop`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-      }).catch(() => console.log("Failed to stop ZenSession on server"));
+      fetch(`${API_BASE_URL}/api/routes/zen/stop`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } }).catch(() => { });
     }
-
-    setIsNavigating(false);
     if (autoStartTimer.current) clearTimeout(autoStartTimer.current);
   };
 
@@ -225,6 +265,64 @@ export default function MainScreen() {
     }
     setSearchSessionId(prev => prev + 1);
     setIsSearching(true);
+  };
+
+  const sendGroupStop = async (groupId: string, coords: { latitude: number, longitude: number }, name: string) => {
+    try {
+      await apiFetch(`/groups/${groupId}/stop`, {
+        method: 'POST',
+        body: JSON.stringify({
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+          name: name
+        })
+      });
+      console.log("Oprire de grup trimisă cu succes!");
+    } catch (error) {
+      console.error("Eroare la sincronizarea opririi de grup:", error);
+    }
+  };
+
+  const handlePlaceSelect = (destCoords: { latitude: number, longitude: number }, name: string) => {
+    if (destination) {
+      setPendingSearch({ coords: destCoords, name });
+      setIsSearching(false);
+    } else {
+      setDestination(destCoords);
+      startNavigationProtocol();
+    }
+  };
+
+  const handleSetNewDestination = () => {
+    if (!pendingSearch) return;
+    setStopDestination(null);
+    setDestination(pendingSearch.coords);
+    setPendingSearch(null);
+    startNavigationProtocol();
+  };
+
+  const handleAddStop = () => {
+    if (!pendingSearch) return;
+
+    if (activeGroupId) {
+      sendGroupStop(activeGroupId, pendingSearch.coords, pendingSearch.name);
+    } else {
+      setStopDestination(pendingSearch.coords);
+    }
+    setPendingSearch(null);
+    startNavigationProtocol();
+  };
+
+  const startNavigationProtocol = () => {
+    if (autoStartTimer.current) clearTimeout(autoStartTimer.current);
+    setIsNavigating(false);
+    setRouteCoordinates([]);
+    initRouteOrigin(activeCoords);
+    setIsSearching(false);
+
+    autoStartTimer.current = setTimeout(() => {
+      setIsNavigating(true);
+    }, 5000);
   };
 
   const recenterMap = () => {
@@ -315,20 +413,9 @@ export default function MainScreen() {
           <View style={styles.searchContainer}>
             <SearchBar
               key={searchSessionId}
+              placeholder="Unde mergem?"
               onClose={closeSearch}
-              onPlaceSelect={(destCoords, name) => {
-                if (autoStartTimer.current) clearTimeout(autoStartTimer.current);
-
-                setIsNavigating(false);
-                setRouteCoordinates([]);
-                setDestination(destCoords);
-                initRouteOrigin(activeCoords);
-                setIsSearching(false);
-
-                autoStartTimer.current = setTimeout(() => {
-                  setIsNavigating(true);
-                }, 5000);
-              }}
+              onPlaceSelect={handlePlaceSelect}
             />
           </View>
         ) : (
@@ -423,30 +510,26 @@ export default function MainScreen() {
               <MapViewDirections
                 origin={routeOrigin}
                 destination={currentDestination}
-                waypoints={currentWaypoints}
+                waypoints={currentWaypoints.length > 0 ? currentWaypoints : undefined}
                 apikey={GOOGLE_API_KEY}
                 strokeWidth={8}
                 strokeColor="#8A2BE2"
                 mode="DRIVING"
                 precision="high"
                 optimizeWaypoints={true}
-                splitWaypoints={true}
                 onReady={(result) => {
                   setRouteCoordinates(result.coordinates);
                   finishRerouting();
-
-                  if (!isNavigating) {
-                    mapRef.current?.fitToCoordinates(result.coordinates, {
-                      edgePadding: { right: 50, bottom: 200, left: 50, top: 100 },
-                      animated: true,
-                    });
-                  }
-                }}
-                onError={(errorMessage) => {
-                  console.log("Directions Error: ", errorMessage);
-                  finishRerouting();
                 }}
               />
+            )}
+
+            {stopDestination && (
+              <Marker coordinate={stopDestination} anchor={{ x: 0.5, y: 1 }}>
+                <View style={styles.stopDestinationMarker}>
+                  <MapPin color="#FFF" size={20} />
+                </View>
+              </Marker>
             )}
 
             {isZenSession && zenCoordinates.length > 0 && (
@@ -463,24 +546,56 @@ export default function MainScreen() {
       </View>
 
       {!isSearching && (
-        <SafeAreaView style={styles.bottomSection} edges={["bottom"]}>
-          <View style={styles.contentContainer}>
-            <View style={{ flexDirection: 'row', gap: 15 }}>
-              <IconButton icon={<Search color="white" size={28} />} onPress={handleOpenSearch} />
-              <IconButton
-                icon={<LocateFixed color="#3B82F6" size={28} />}
-                onPress={recenterMap}
-              />
-            </View>
-            <View style={styles.centerButtonSpacer}>
-              <AddEventButton onPress={() => setModalVisible(true)} />
-            </View>
-            <TouchableOpacity onLongPress={cancelNavigation} activeOpacity={0.8}>
+        <View style={styles.bottomWrapper}>
+          {isNavigating && (
+            <Animated.View style={[styles.cancelBackground, { opacity: cancelOpacity }]}>
+              <XCircle color="white" size={32} />
+              <Text style={styles.cancelText}>ELIBEREAZĂ PENTRU A ANULA RUTA</Text>
+            </Animated.View>
+          )}
+
+          <Animated.View
+            style={[styles.bottomSection, { transform: [{ translateY: isNavigating ? panY : 0 }] }]}
+            {...(isNavigating ? panResponder.panHandlers : {})}
+          >
+            {isNavigating && <View style={styles.dragHandle} />}
+
+            <View style={styles.contentContainer}>
+              <View style={{ flexDirection: 'row', gap: 15 }}>
+                <IconButton icon={<Search color="white" size={28} />} onPress={handleOpenSearch} />
+                <IconButton icon={<LocateFixed color="#3B82F6" size={28} />} onPress={recenterMap} />
+              </View>
+              <View style={styles.centerButtonSpacer}>
+                <AddEventButton onPress={() => setModalVisible(true)} />
+              </View>
               <SpeedBox speed={speed} limit={80} />
+            </View>
+          </Animated.View>
+        </View>
+      )}
+
+      <Modal visible={!!pendingSearch} transparent animationType="slide">
+        <View style={styles.actionSheetOverlay}>
+          <View style={styles.actionSheetContent}>
+            <Text style={styles.actionSheetTitle}>Ai deja un traseu activ</Text>
+            <Text style={styles.actionSheetSubtitle}>Ce dorești să faci cu {pendingSearch?.name}?</Text>
+
+            <TouchableOpacity style={styles.actionBtnPrimary} onPress={handleSetNewDestination}>
+              <Map color="#FFF" size={24} />
+              <Text style={styles.actionBtnTextPrimary}>Destinație Nouă (Înlocuiește)</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.actionBtnSecondary} onPress={handleAddStop}>
+              <MapPin color="#A855F7" size={24} />
+              <Text style={styles.actionBtnTextSecondary}>Adaugă ca Oprire (Stop)</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.actionBtnCancel} onPress={() => setPendingSearch(null)}>
+              <Text style={styles.actionBtnTextCancel}>Anulează</Text>
             </TouchableOpacity>
           </View>
-        </SafeAreaView>
-      )}
+        </View>
+      </Modal>
 
       <AddEventModal isVisible={isModalVisible} onClose={() => setModalVisible(false)} />
 
@@ -560,25 +675,111 @@ const styles = StyleSheet.create({
   map: { flex: 1 },
   searchContainer: { flex: 1, backgroundColor: "#000" },
   iconPadding: { justifyContent: 'center', paddingHorizontal: 15 },
+  bottomWrapper: {
+    position: 'absolute',
+    bottom: 0,
+    width: '100%',
+    zIndex: 5,
+  },
+  cancelBackground: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#EF4444',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    flexDirection: 'column',
+    gap: 10,
+    paddingBottom: 40
+  },
+  cancelText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '900',
+    letterSpacing: 1
+  },
   bottomSection: {
     backgroundColor: "rgba(10, 10, 10, 0.95)",
     borderTopWidth: 1,
     borderTopColor: "#1A1A1A",
     borderTopLeftRadius: 30,
     borderTopRightRadius: 30,
-    position: 'absolute',
-    bottom: 0,
-    width: '100%',
-    zIndex: 5,
+  },
+  dragHandle: {
+    width: 40,
+    height: 4,
+    backgroundColor: '#333',
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginTop: 10,
   },
   contentContainer: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 25,
-    paddingTop: 15,
-    paddingBottom: 20,
+    paddingTop: 10,
+    paddingBottom: 25,
   },
   centerButtonSpacer: { flex: 1, alignItems: "center" },
+
+  stopDestinationMarker: {
+    backgroundColor: '#F59E0B',
+    padding: 6,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#000',
+    shadowColor: '#F59E0B',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 1,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+
+  actionSheetOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    justifyContent: 'flex-end'
+  },
+  actionSheetContent: {
+    backgroundColor: '#111',
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    padding: 25,
+    paddingBottom: 40,
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+    alignItems: 'center'
+  },
+  actionSheetTitle: { color: 'white', fontSize: 18, fontWeight: '900', marginBottom: 5 },
+  actionSheetSubtitle: { color: '#888', fontSize: 14, marginBottom: 25, textAlign: 'center' },
+  actionBtnPrimary: {
+    flexDirection: 'row',
+    backgroundColor: '#8A2BE2',
+    width: '100%',
+    padding: 18,
+    borderRadius: 15,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 15,
+    gap: 10
+  },
+  actionBtnTextPrimary: { color: 'white', fontSize: 16, fontWeight: 'bold' },
+  actionBtnSecondary: {
+    flexDirection: 'row',
+    backgroundColor: '#0A0A0A',
+    borderWidth: 1,
+    borderColor: '#8A2BE2',
+    width: '100%',
+    padding: 18,
+    borderRadius: 15,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+    gap: 10
+  },
+  actionBtnTextSecondary: { color: '#8A2BE2', fontSize: 16, fontWeight: 'bold' },
+  actionBtnCancel: { padding: 15 },
+  actionBtnTextCancel: { color: '#666', fontSize: 16, fontWeight: 'bold' },
   customMarkerGlow: {
     shadowColor: "#8A2BE2",
     shadowOffset: { width: 0, height: 0 },

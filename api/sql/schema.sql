@@ -97,3 +97,14 @@ GRANT USAGE ON SCHEMA public TO zen_ro;
 GRANT SELECT ON location_history TO zen_ro;
 GRANT SELECT ON disliked_areas TO zen_ro;
 GRANT SELECT ON events TO zen_ro;
+
+--groups
+CREATE TABLE IF NOT EXISTS group_stops (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id UUID NOT NULL, 
+    added_by UUID REFERENCES users(id),
+    name VARCHAR(255) NOT NULL,
+    location GEOGRAPHY(Point, 4326) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS group_stops_location_idx ON group_stops USING GIST (location);

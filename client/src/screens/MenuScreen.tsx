@@ -18,6 +18,8 @@ export default function MenuScreen({ navigation }: any) {
     pendingGroupInvites, setPendingGroupInvites
   } = useSettingsStore();
 
+  const [isTermsVisible, setIsTermsVisible] = useState(false);
+
   const {
     pendingRequests,
     isSearching,
@@ -199,9 +201,9 @@ export default function MenuScreen({ navigation }: any) {
 
         <TouchableOpacity
           style={styles.termsContainer}
-          onPress={() => Linking.openURL('https://www.youtube.com/watch?v=FjR2kJTbslQ')}
+          onPress={() => setIsTermsVisible(true)}
         >
-          <Text style={styles.termsText}>Terms and Conditions & Privacy Policy</Text>
+          <Text style={styles.termsLinkText}>Terms & Conditions</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -253,6 +255,67 @@ export default function MenuScreen({ navigation }: any) {
             />
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal visible={isTermsVisible} transparent={true} animationType="slide">
+        <View style={styles.termsOverlay}>
+          <View style={styles.termsContent}>
+            <Text style={styles.termsTitle}>NightDrive — Terms & Conditions</Text>
+
+            <ScrollView style={styles.termsScroll} showsVerticalScrollIndicator={true}>
+              <Text style={styles.termsText}>
+                <Text style={styles.termsBold}>Effective / Last Updated:</Text> March 21, 2026{"\n\n"}
+                NightDrive is a community-driven navigation app for car enthusiasts, providing real-time GPS navigation, social features, and crowd-sourced road event reporting. By using the App, users agree to comply with these Terms.{"\n\n"}
+
+                <Text style={styles.termsBold}>1. User Eligibility & Accounts</Text>{"\n"}
+                • Must be ≥18 years old or legal driving age.{"\n"}
+                • Valid driver’s license required if using while driving.{"\n"}
+                • Account creation requires email, username, password, and generates a unique driver tag (e.g., #4Z9C).{"\n"}
+                • Users are responsible for account security. Account deletion permanently removes data and friend connections.{"\n\n"}
+
+                <Text style={styles.termsBold}>2. Acceptable Use</Text>{"\n"}
+                Users must:{"\n"}
+                • Follow traffic laws and report accurate road events.{"\n"}
+                • Treat other users respectfully.{"\n\n"}
+                Prohibited activities:{"\n"}
+                • Unsafe interaction while driving.{"\n"}
+                • False reports or vote manipulation.{"\n"}
+                • Unauthorized access, impersonation, or automated scraping.{"\n\n"}
+
+                <Text style={styles.termsBold}>3. Driving Safety Disclaimer</Text>{"\n"}
+                NightDrive is informational only; the driver is always responsible. GPS, dead reckoning, and community reports may contain errors. Do not use App features as a substitute for vehicle instruments. NightDrive and affiliates are not liable for accidents, fines, or damages.{"\n\n"}
+
+                <Text style={styles.termsBold}>4. Community Content</Text>{"\n"}
+                Users are responsible for accuracy and legality of reports. Event upvote/downvote system helps validate content but is not guaranteed. NightDrive may remove content violating Terms.{"\n\n"}
+
+                <Text style={styles.termsBold}>5. Intellectual Property & Licensing</Text>{"\n"}
+                App code, design, logos, and brand are owned by NightDrive. Limited, personal-use license granted to users. Third-party services (Google Maps, PostGIS) are subject to their own terms.{"\n\n"}
+
+                <Text style={styles.termsBold}>6. Privacy & Data</Text>{"\n"}
+                • <Text style={styles.termsBold}>Collected Data:</Text> Account, GPS location, usage data, device info.{"\n"}
+                • <Text style={styles.termsBold}>Security:</Text> Passwords hashed via bcrypt, API calls secured with JWT tokens, encrypted transmission.{"\n"}
+                • <Text style={styles.termsBold}>Sharing:</Text> Only with law enforcement or essential service providers.{"\n"}
+                • <Text style={styles.termsBold}>User Rights:</Text> Access, correct, delete, export data; withdraw consent anytime.{"\n\n"}
+
+                <Text style={styles.termsBold}>7. Liability & Indemnification</Text>{"\n"}
+                App is provided “as is”; no warranties. NightDrive not liable for indirect, incidental, or consequential damages.{"\n\n"}
+
+                <Text style={styles.termsBold}>8. Termination</Text>{"\n"}
+                Users can delete accounts anytime. NightDrive may suspend accounts for violations.{"\n\n"}
+
+                <Text style={styles.termsBold}>9. Modifications & Governing Law</Text>{"\n"}
+                Terms may be updated; continued use = acceptance. Governed by Romanian law, jurisdiction of Bucharest courts.{"\n\n"}
+
+                <Text style={styles.termsBold}>10. Contact</Text>{"\n"}
+                Email: mihai.arisanu2006@gmail.com
+              </Text>
+            </ScrollView>
+
+            <TouchableOpacity style={styles.closeTermsBtn} onPress={() => setIsTermsVisible(false)}>
+              <Text style={styles.closeTermsBtnText}>I UNDERSTAND & AGREE</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -489,10 +552,58 @@ const styles = StyleSheet.create({
     marginTop: 30,
     alignItems: "center",
   },
-  termsText: {
+  termsLinkText: {
     color: "#666",
     fontSize: 12,
     fontWeight: "bold",
     textDecorationLine: "underline",
   },
+  termsOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20
+  },
+  termsContent: {
+    width: '100%',
+    maxHeight: '80%',
+    backgroundColor: '#111',
+    borderRadius: 20,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: '#333'
+  },
+  termsTitle: {
+    color: '#FFF',
+    fontSize: 20,
+    fontWeight: '900',
+    marginBottom: 15,
+    textAlign: 'center',
+    letterSpacing: 1
+  },
+  termsScroll: {
+    marginBottom: 20
+  },
+  termsText: {
+    color: '#AAA',
+    fontSize: 14,
+    lineHeight: 22
+  },
+  termsBold: {
+    color: '#A855F7',
+    fontWeight: 'bold'
+  },
+  closeTermsBtn: {
+    backgroundColor: '#A855F7',
+    paddingVertical: 15,
+    borderRadius: 12,
+    alignItems: 'center'
+  },
+  closeTermsBtnText: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: 'bold',
+    letterSpacing: 1
+  }
 });
