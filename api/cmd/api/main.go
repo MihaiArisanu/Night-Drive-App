@@ -41,10 +41,11 @@ func main() {
 	})
 
 	mux.HandleFunc("/api/users", handlers.CreateUserHandler(database))
-	mux.HandleFunc("/api/login", handlers.LoginHandler(database))
+	mux.HandleFunc("/api/login", handlers.LoginHandler(database, hub))
 	mux.HandleFunc("/api/events/nearby", handlers.GetNearbyEventsHandler(database))
 	mux.HandleFunc("/api/users/search", handlers.RequireAuth(handlers.SearchUserHandler(database)))
 	mux.HandleFunc("/api/users/me", handlers.RequireAuth(handlers.GetUserMeHandler(database)))
+	mux.HandleFunc("/api/users/location", handlers.RequireAuth(handlers.UpdateUserLocationHandler(database)))
 
 	mux.HandleFunc("/api/events", handlers.RequireAuth(handlers.CreateEventHandler(database, hub)))
 
@@ -52,6 +53,7 @@ func main() {
 	mux.HandleFunc("/api/friends/nearby", handlers.RequireAuth(handlers.GetNearbyFriendsHandler(database)))
 	mux.HandleFunc("/api/voice/upload", handlers.RequireAuth(handlers.UploadVoiceHandler(hub)))
 	mux.HandleFunc("/api/users/places", handlers.RequireAuth(handlers.PlacesHandler(database)))
+	mux.HandleFunc("/api/users/places/{id}", handlers.RequireAuth(handlers.PlaceByIDHandler(database)))
 	mux.HandleFunc("/api/users/dislikes", handlers.RequireAuth(handlers.DislikesHandler(database)))
 	mux.HandleFunc("/api/users/dislikes/{id}", handlers.RequireAuth(handlers.DislikeByIDHandler(database)))
 

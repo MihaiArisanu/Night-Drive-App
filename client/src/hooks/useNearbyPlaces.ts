@@ -23,6 +23,11 @@ export function useNearbyPlaces(
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
+
+        console.log("🔍 USE EFFECT TRIGGERED!");
+        console.log("Search Type:", searchType);
+        console.log("Coords:", latitude, longitude);
+
         if (searchType === 'none' || searchType === 'saved' || latitude === 0) {
             setPlaces([]);
             return;
@@ -61,9 +66,8 @@ export function useNearbyPlaces(
 
                 const data = await response.json();
 
-                // 🚨 PRINDEM EROAREA DE LA GOOGLE ȘI O AFIȘĂM 🚨
                 if (data.error) {
-                    console.error("❌ Google Places API Error:", data.error.message);
+                    console.error("[Places] Google API error:", data.error.message);
                     if (isMounted) {
                         setError(data.error.message);
                         setIsLoading(false);
@@ -115,7 +119,7 @@ export function useNearbyPlaces(
                 const data = await response.json();
 
                 if (data.error) {
-                    console.error("❌ Google Fallback API Error:", data.error.message);
+                    console.error("[Places] Google Fallback API error:", data.error.message);
                     if (isMounted) {
                         setError(data.error.message);
                         setIsLoading(false);

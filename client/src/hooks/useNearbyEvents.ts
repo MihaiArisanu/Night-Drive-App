@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-// 1. Importăm apiFetch în loc de fetch-ul nativ
-import { apiFetch } from '../services/api'; // Ajustează calea către api.ts-ul tău
+import { apiFetch } from '../services/api';
 
 export interface TrafficEvent {
     id: string;
@@ -15,9 +14,7 @@ export function useNearbyEvents(userLat: number | null, userLng: number | null) 
     const [isLoading, setIsLoading] = useState(false);
 
     const fetchEvents = useCallback(async () => {
-        // Verificăm strict dacă avem numere
         if (userLat === null || userLng === null || isNaN(userLat) || isNaN(userLng)) {
-            console.log("⏳ Așteptăm coordonate valide...");
             return;
         }
 
@@ -26,18 +23,15 @@ export function useNearbyEvents(userLat: number | null, userLng: number | null) 
             const radius = 20000;
             const limit = 50;
 
-            // Folosim apiFetch și curățăm parametrii
             const data = await apiFetch(
                 `/events/nearby?lat=${userLat.toFixed(6)}&lng=${userLng.toFixed(6)}&radius=${radius}&limit=${limit}`
             );
 
             if (data && Array.isArray(data)) {
                 setEvents(data);
-                console.log(`✅ Am descărcat ${data.length} evenimente.`);
             }
         } catch (error) {
-            // Aici vor apărea erorile de tip "401" sau "500" într-un format lizibil
-            console.error("❌ Eroare la fetchEvents:", error instanceof Error ? error.message : String(error));
+            console.error("[Events] Fetch error:", error instanceof Error ? error.message : String(error));
         } finally {
             setIsLoading(false);
         }

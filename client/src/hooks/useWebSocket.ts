@@ -1,7 +1,9 @@
 import { useEffect, useRef } from 'react';
+import { Alert } from 'react-native';
 import Toast from 'react-native-toast-message';
 import { API_BASE_URL } from '@env';
 import { useSettingsStore } from '../store/useSettingsStore';
+import { useNavigation } from '@react-navigation/native';
 
 interface InvitePayload {
     friendName: string;
@@ -75,7 +77,8 @@ export function useWebSocket(
 }
 
 export function useGroupStopListener(socket: WebSocket | null) {
-    const { activeGroupId, setGroupStop } = useSettingsStore();
+    const { activeGroupId, setGroupStop, clearSettings } = useSettingsStore();
+    const navigation = useNavigation<any>();
 
     useEffect(() => {
         if (!socket) return;
@@ -83,6 +86,19 @@ export function useGroupStopListener(socket: WebSocket | null) {
         const handleWebSocketMessage = (event: WebSocketMessageEvent) => {
             try {
                 const data = JSON.parse(event.data);
+
+                if (data.type === 'session_invalidated') {
+                    Alert.alert(
+                        "Session Expired",
+                        "You have logged in from another device. This session will be closed.",
+                        [{
+                            text: "OK", onPress: () => {
+                                clearSettings();
+                                navigation.replace('Welcome');
+                            }
+                        }]
+                    );
+                }
 
                 if (data.type === 'group_stop_added') {
 

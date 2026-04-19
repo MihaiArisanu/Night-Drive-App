@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, Keyboard, Modal, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowLeft, Trash2, MapPin, LocateFixed, Edit2 } from 'lucide-react-native';
@@ -6,6 +6,32 @@ import Toast from 'react-native-toast-message';
 import { useSavedPlaces } from '../hooks/useSavedPlaces';
 import { useLocation } from '../hooks/useLocation';
 import { SearchBar } from '../components/SearchBar';
+import { GOOGLE_API_GENERAL_KEY } from '@env';
+
+const AddressDisplay = ({ lat, lng, fallback }: { lat: number; lng: number; fallback: string }) => {
+    const [address, setAddress] = useState<string | null>(null);
+
+    useEffect(() => {
+        let isMounted = true;
+        fetch(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_API_GENERAL_KEY}`)
+            .then((res) => res.json())
+            .then((data) => {
+                if (isMounted && data.status === "OK" && data.results.length > 0) {
+                    setAddress(data.results[0].formatted_address);
+                }
+            })
+            .catch(() => { });
+        return () => {
+            isMounted = false;
+        };
+    }, [lat, lng]);
+
+    return (
+        <Text style={styles.placeAddress} numberOfLines={2}>
+            {address || fallback}
+        </Text>
+    );
+};
 
 export default function SavedPlacesScreen({ navigation }: any) {
     const { savedPlaces, deletePlace, savePlace, updatePlace } = useSavedPlaces();
@@ -34,6 +60,12 @@ export default function SavedPlacesScreen({ navigation }: any) {
                 text1: 'Location Saved!',
                 text2: 'Your current location has been added.',
             });
+        } else {
+            Toast.show({
+                type: 'error',
+                text1: 'No GPS Signal',
+                text2: 'Please wait for a location lock before saving.',
+            });
         }
     };
 
@@ -51,6 +83,7 @@ export default function SavedPlacesScreen({ navigation }: any) {
                 <SearchBar
                     isCompact={true}
                     placeholder="Search for a place to save..."
+                    userCoords={coords}
                     onClose={() => Keyboard.dismiss()}
                     onPlaceSelect={async (coords, name) => {
                         setIsAdding(true);
@@ -67,7 +100,7 @@ export default function SavedPlacesScreen({ navigation }: any) {
 
                 <TouchableOpacity style={styles.currentLocationRow} onPress={handleSaveCurrentLocation}>
                     <LocateFixed color="#A855F7" size={20} />
-                    <Text style={styles.currentLocationText}>Salvează locația curentă</Text>
+                    <Text style={styles.currentLocationText}>Save current location</Text>
                 </TouchableOpacity>
             </View>
 
@@ -75,8 +108,8 @@ export default function SavedPlacesScreen({ navigation }: any) {
                 {isAdding && <ActivityIndicator color="#A855F7" style={{ marginBottom: 15 }} />}
 
                 {savedPlaces.map((place) => (
-                    <TouchableOpacity 
-                        key={place.id} 
+                    <TouchableOpacity
+                        key={place.id}
                         style={styles.card}
                         activeOpacity={0.7}
                         onLongPress={() => {
@@ -88,9 +121,11 @@ export default function SavedPlacesScreen({ navigation }: any) {
                             <MapPin color="#A855F7" size={24} />
                             <View style={styles.info}>
                                 <Text style={styles.placeName}>{place.name}</Text>
-                                <Text style={styles.placeAddress}>
-                                    Lat: {place.latitude.toFixed(4)}, Lng: {place.longitude.toFixed(4)}
-                                </Text>
+                                <AddressDisplay
+                                    lat={place.latitude}
+                                    lng={place.longitude}
+                                    fallback={`Lat: ${place.latitude.toFixed(4)}, Lng: ${place.longitude.toFixed(4)}`}
+                                />
                             </View>
                         </View>
                         <TouchableOpacity onPress={() => {
@@ -107,7 +142,7 @@ export default function SavedPlacesScreen({ navigation }: any) {
                 <View style={styles.modalOverlay}>
                     <View style={styles.modalContent}>
                         <Text style={styles.modalTitle}>Edit Name</Text>
-                        <TextInput 
+                        <TextInput
                             style={styles.input}
                             value={editName}
                             onChangeText={setEditName}

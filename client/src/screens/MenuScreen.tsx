@@ -1,11 +1,11 @@
-import { ArrowLeft, Bookmark, MapPinOff, MessageSquare, Search, UserPlus, X, Users, LogOut } from "lucide-react-native";
+import { ArrowLeft, Bookmark, MapPinOff, MessageSquare, Search, UserPlus, X, Users, LogOut, CheckCircle, AlertCircle, Info } from "lucide-react-native";
 import { Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, Modal, KeyboardAvoidingView, Platform, ActivityIndicator, Linking } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useState } from "react";
 import { ActionButton } from "../components/ActionButton";
 
 import { useDeleteAccount } from "../hooks/useDeleteAccount";
-import { useFriendRequests } from "../hooks/useFriendRequests";
+import { useFriendRequests, FriendRequestResult } from "../hooks/useFriendRequests";
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 
@@ -30,12 +30,35 @@ export default function MenuScreen({ navigation }: any) {
 
   const [isAddFriendVisible, setIsAddFriendVisible] = useState(false);
   const [searchTag, setSearchTag] = useState("");
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
-  const handleSend = () => {
-    sendFriendRequest(searchTag, () => {
-      setIsAddFriendVisible(false);
-      setSearchTag("");
-    });
+  const handleSend = async () => {
+    setFeedback(null);
+    const result: FriendRequestResult = await sendFriendRequest(searchTag);
+    switch (result.status) {
+      case 'success':
+        setFeedback({ type: 'success', text: `Request sent to ${result.name}! ✓` });
+        setSearchTag("");
+        break;
+      case 'not_found':
+        setFeedback({ type: 'error', text: 'No driver found with this TAG.' });
+        break;
+      case 'already_friends':
+        setFeedback({ type: 'info', text: 'You are already friends with this driver.' });
+        break;
+      case 'self':
+        setFeedback({ type: 'info', text: 'You cannot send a friend request to yourself.' });
+        break;
+      case 'error':
+        setFeedback({ type: 'error', text: result.message ?? 'Unknown error.' });
+        break;
+    }
+  };
+
+  const handleCloseAddFriend = () => {
+    setIsAddFriendVisible(false);
+    setSearchTag("");
+    setFeedback(null);
   };
 
   const handleLeaveGroup = () => {
@@ -98,7 +121,7 @@ export default function MenuScreen({ navigation }: any) {
               <View key={member.id} style={styles.memberCard}>
                 <Text style={styles.memberText}>{member.name} {member.tag}</Text>
                 <TouchableOpacity
-                  onPress={() => sendFriendRequest(member.tag, () => { })}
+                  onPress={() => sendFriendRequest(member.tag)}
                   style={styles.addMemberBtn}
                 >
                   <UserPlus color="#A855F7" size={18} />
@@ -223,13 +246,13 @@ export default function MenuScreen({ navigation }: any) {
         visible={isAddFriendVisible}
         transparent={true}
         animationType="fade"
-        onRequestClose={() => setIsAddFriendVisible(false)}
+        onRequestClose={handleCloseAddFriend}
       >
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>SEARCH DRIVER</Text>
-              <TouchableOpacity onPress={() => setIsAddFriendVisible(false)}>
+              <TouchableOpacity onPress={handleCloseAddFriend}>
                 <X color="#444" size={24} />
               </TouchableOpacity>
             </View>
@@ -241,16 +264,35 @@ export default function MenuScreen({ navigation }: any) {
                 placeholder="Enter TAG (e.g. #4Z9C)"
                 placeholderTextColor="#666"
                 value={searchTag}
-                onChangeText={setSearchTag}
+                onChangeText={(t) => { setSearchTag(t); setFeedback(null); }}
                 autoCapitalize="characters"
                 maxLength={6}
               />
             </View>
 
+            {feedback && (
+              <View style={[
+                styles.feedbackRow,
+                feedback.type === 'success' && styles.feedbackSuccess,
+                feedback.type === 'error'   && styles.feedbackError,
+                feedback.type === 'info'    && styles.feedbackInfo,
+              ]}>
+                {feedback.type === 'success' && <CheckCircle color="#10B981" size={16} />}
+                {feedback.type === 'error'   && <AlertCircle color="#EF4444" size={16} />}
+                {feedback.type === 'info'    && <Info color="#F59E0B" size={16} />}
+                <Text style={[
+                  styles.feedbackText,
+                  feedback.type === 'success' && { color: '#10B981' },
+                  feedback.type === 'error'   && { color: '#EF4444' },
+                  feedback.type === 'info'    && { color: '#F59E0B' },
+                ]}>{feedback.text}</Text>
+              </View>
+            )}
+
             <ActionButton
               title={isSearching ? "SEARCHING..." : "SEND REQUEST"}
               onPress={handleSend}
-              style={{ marginTop: 20, width: "100%" }}
+              style={{ marginTop: 16, width: "100%" }}
               disabled={isSearching || searchTag.length < 2}
             />
           </View>
@@ -530,6 +572,35 @@ const styles = StyleSheet.create({
     fontSize: 16,
     paddingVertical: 15,
     fontWeight: "bold",
+  },
+  feedbackRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
+  feedbackSuccess: {
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+  },
+  feedbackError: {
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.3)',
+  },
+  feedbackInfo: {
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+  },
+  feedbackText: {
+    fontSize: 13,
+    fontWeight: '600',
+    flex: 1,
   },
   deleteAccountButton: {
     marginTop: 40,

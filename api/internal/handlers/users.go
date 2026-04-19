@@ -12,6 +12,7 @@ import (
 
 	"github.com/MihaiArisanu/nightdrive-backend/internal/db"
 	"github.com/MihaiArisanu/nightdrive-backend/internal/models"
+	"github.com/MihaiArisanu/nightdrive-backend/internal/ws"
 )
 
 func CreateUserHandler(database *sql.DB) http.HandlerFunc {
@@ -55,7 +56,7 @@ func CreateUserHandler(database *sql.DB) http.HandlerFunc {
 
 var jwtKey = []byte("super_secret_jwt_key_for_nightdrive")
 
-func LoginHandler(database *sql.DB) http.HandlerFunc {
+func LoginHandler(database *sql.DB, hub *ws.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -79,6 +80,17 @@ func LoginHandler(database *sql.DB) http.HandlerFunc {
 			http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 			return
 		}
+
+		// Trimitem mesajul de deconectare vechii sesiuni
+		kickMsg := map[string]string{
+			"type":    "session_invalidated",
+			"message": "Te-ai logat de pe alt dispozitiv.",
+		}
+		kickBytes, _ := json.Marshal(kickMsg)
+
+		// Asta va căuta în memoria serverului dacă userul e conectat pe alt telefon
+		// și îi va trimite eventul pe WebSocket.
+		hub.SendToUser(user.ID, kickBytes)
 
 		token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 			"user_id": user.ID,
@@ -187,5 +199,39 @@ func GetUserMeHandler(database *sql.DB) http.HandlerFunc {
 			"tag":   user.Tag,
 			"email": user.Email,
 		})
+	}
+}
+
+func UpdateUserLocationHandler(database *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		userID, ok := r.Context().Value(UserIDKey).(string)
+		if !ok || userID == "" {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		var payload struct {
+			Latitude  float64 `json:"latitude"`
+			Longitude float64 `json:"longitude"`
+			Heading   float64 `json:"heading"`
+			Speed     float64 `json:"speed"`
+			IsDnd     bool    `json:"isDnd"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if err := db.UpdateUserLocation(database, userID, payload.Latitude, payload.Longitude, payload.Heading, payload.Speed, payload.IsDnd); err != nil {
+			http.Error(w, "Failed to update location", http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
 	}
 }

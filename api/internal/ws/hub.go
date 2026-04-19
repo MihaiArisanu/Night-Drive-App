@@ -76,3 +76,16 @@ func (h *Hub) Run() {
 		}
 	}
 }
+
+func (h *Hub) SendToUser(userID string, message []byte) {
+	for client := range h.Clients {
+		if client.UserID == userID {
+			select {
+			case client.Send <- message:
+			default:
+				close(client.Send)
+				delete(h.Clients, client)
+			}
+		}
+	}
+}

@@ -37,3 +37,29 @@ func SavePlace(dbConn *sql.DB, userID string, req models.PlaceRequest) error {
 	_, err := dbConn.Exec(query, userID, req.Name, req.Longitude, req.Latitude)
 	return err
 }
+
+func UpdatePlace(dbConn *sql.DB, userID string, placeID string, name string) error {
+	query := `UPDATE saved_places SET name = $1 WHERE id = $2 AND user_id = $3`
+	res, err := dbConn.Exec(query, name, placeID, userID)
+	if err != nil {
+		return err
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func DeletePlace(dbConn *sql.DB, userID string, placeID string) error {
+	query := `DELETE FROM saved_places WHERE id = $1 AND user_id = $2`
+	res, err := dbConn.Exec(query, placeID, userID)
+	if err != nil {
+		return err
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}

@@ -39,10 +39,13 @@ import { useSettingsStore } from '../store/useSettingsStore';
 const GOOGLE_API_KEY = GOOGLE_API_GENERAL_KEY;
 
 interface InviteData {
-  friendName: string;
+  friendName?: string;
+  senderName?: string;
   distance: string;
   eta: string;
   groupId: string;
+  othersCount?: number;
+  message?: string;
 }
 
 export default function MainScreen() {
@@ -58,24 +61,24 @@ export default function MainScreen() {
   const [stopDestination, setStopDestination] = useState<{ latitude: number, longitude: number } | null>(null);
   const [routeCoordinates, setRouteCoordinates] = useState<{ latitude: number, longitude: number }[]>([]);
   const [isNavigating, setIsNavigating] = useState(false);
+  const [routeInfo, setRouteInfo] = useState<{ distance: number, duration: number } | null>(null);
 
   const [isSearching, setIsSearching] = useState(false);
   const [searchSessionId, setSearchSessionId] = useState(0);
   const [pendingSearch, setPendingSearch] = useState<{ coords: { latitude: number, longitude: number }, name: string } | null>(null);
 
   const [isZenSession, setIsZenSession] = useState(false);
-  const [zenCoordinates, setZenCoordinates] = useState<{ latitude: number, longitude: number }[]>([]);
+  const [zenDestination, setZenDestination] = useState<{ latitude: number, longitude: number } | null>(null);
 
   const autoStartTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [showRideInvite, setShowRideInvite] = useState(false);
   const [inviteData, setInviteData] = useState<InviteData | null>(null);
 
-  const { isDNDActive, userId, userName, activeGroupId, groupDestination, groupStop, rendezvousPoint, setActiveGroupId, token } = useSettingsStore();
-
+  const { isDNDActive, userId, userName, activeGroupId, groupDestination, rendezvousPoint, groupStop, setActiveGroupId, token, setGroupDestination, setGroupStop } = useSettingsStore();
   const { submitReport, isSubmitting } = useReporting();
   const { events, refetchEvents } = useNearbyEvents(activeCoords.latitude || 44.4268, activeCoords.longitude || 26.1025);
-  const { friends } = useNearbyFriends(activeCoords.latitude, activeCoords.longitude, isDNDActive);
+  const { friends } = useNearbyFriends(activeCoords.latitude, activeCoords.longitude, isDNDActive, token);
   const { sendInvite } = useRideInvite();
 
   const { dislikedAreas, addDislike } = useDislikedAreas();
@@ -134,11 +137,19 @@ export default function MainScreen() {
     extrapolate: 'clamp'
   });
 
-  const handleIncomingInvite = (data: InviteData) => {
+  const handleIncomingInvite = (data: any) => {
     if (isDNDActive) {
       return;
     }
-    setInviteData(data);
+    const othersCount = data.othersCount || 0;
+
+    const name = data.senderName || data.friendName || 'a friend';
+
+    const inviteText = othersCount > 0
+      ? `Join ${name} and ${othersCount} other riders?`
+      : `Join ${name} for a ride?`;
+
+    setInviteData({ ...data, message: inviteText });
     setShowRideInvite(true);
   };
 
@@ -160,17 +171,36 @@ export default function MainScreen() {
   useActiveRouteSync(routeCoordinates, isNavigating);
   usePushNotifications();
 
-  const appendZenRoute = (newCoords: { latitude: number, longitude: number }[]) => {
-    setZenCoordinates(prev => [...prev, ...newCoords]);
-  };
-  useZenSessionSync(isZenSession, activeCoords.latitude, activeCoords.longitude, appendZenRoute);
+  useZenSessionSync(isZenSession, activeCoords.latitude, activeCoords.longitude, () => { });
 
-  const handleAcceptRide = () => {
-    if (inviteData?.groupId) {
+
+  const handleAcceptRide = async () => {
+    if (!inviteData?.groupId) return;
+
+    try {
+      const groupData = await apiFetch(`/groups/${inviteData.groupId}/join`, { method: 'POST' });
+
       setActiveGroupId(inviteData.groupId);
+      setShowRideInvite(false);
+
+      if (groupData.destination) {
+        setGroupDestination(groupData.destination);
+        if (groupData.stop) setGroupStop(groupData.stop);
+        if (isZenSession) {
+          setIsZenSession(false);
+          setZenDestination(null);
+        }
+
+        startNavigationProtocol();
+      }
+
+      else if (isZenSession && groupData.allZen) {
+        console.log("Joined a shared Zen session");
+      }
+
+    } catch (error) {
+      console.error("Failed to join ride:", error);
     }
-    setShowRideInvite(false);
-    setInviteData(null);
   };
 
   const handleDeclineRide = () => {
@@ -247,10 +277,12 @@ export default function MainScreen() {
     setStopDestination(null);
     resetRouteOrigin();
     setRouteCoordinates([]);
-    setZenCoordinates([]);
+    setZenDestination(null);
     setIsNavigating(false);
     setIsSearching(false);
     setSearchSessionId(prev => prev + 1);
+    setRouteInfo(null);
+    panY.setValue(0);
 
     if (isZenSession) {
       setIsZenSession(false);
@@ -277,9 +309,9 @@ export default function MainScreen() {
           name: name
         })
       });
-      console.log("Oprire de grup trimisă cu succes!");
+      console.log("Group stop shared successfully!");
     } catch (error) {
-      console.error("Eroare la sincronizarea opririi de grup:", error);
+      console.error("Error sharing group stop:", error);
     }
   };
 
@@ -364,9 +396,9 @@ export default function MainScreen() {
     setIsZenSession(newZenState);
 
     if (newZenState) {
-      setZenCoordinates([]);
+      setZenDestination(null);
       try {
-        const response = await fetch(`${API_BASE_URL}/routes/zen/start`, {
+        const response = await fetch(`${API_BASE_URL}/api/routes/zen/start`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -374,7 +406,8 @@ export default function MainScreen() {
           },
           body: JSON.stringify({
             latitude: activeCoords.latitude,
-            longitude: activeCoords.longitude
+            longitude: activeCoords.longitude,
+            heading: heading ?? 0
           })
         });
 
@@ -383,8 +416,8 @@ export default function MainScreen() {
           throw new Error(`ZenSession API Error ${response.status}: ${text}`);
         }
         const data = JSON.parse(text);
-        if (data.initialPolyline) {
-          setZenCoordinates(decodePolyline(data.initialPolyline));
+        if (data.next_lat && data.next_lng) {
+          setZenDestination({ latitude: data.next_lat, longitude: data.next_lng });
           setIsNavigating(true);
         }
       } catch (error) {
@@ -394,6 +427,44 @@ export default function MainScreen() {
     } else {
       cancelNavigation();
     }
+  };
+
+  useEffect(() => {
+    if (!isZenSession || !zenDestination || !token || activeCoords.latitude === 0) return;
+
+    const distM = (() => {
+      const R = 6371000;
+      const rad = Math.PI / 180;
+      const dLat = (zenDestination.latitude - activeCoords.latitude) * rad;
+      const dLng = (zenDestination.longitude - activeCoords.longitude) * rad;
+      const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos(activeCoords.latitude * rad) * Math.cos(zenDestination.latitude * rad) * Math.sin(dLng / 2) ** 2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    })();
+
+    if (distM < 500) {
+      fetch(`${API_BASE_URL}/api/routes/zen/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ latitude: activeCoords.latitude, longitude: activeCoords.longitude, heading: heading ?? 0 })
+      })
+        .then(r => r.json())
+        .then(data => {
+          if (data.status === 'extended' && data.next_lat && data.next_lng) {
+            setZenDestination({ latitude: data.next_lat, longitude: data.next_lng });
+          }
+        })
+        .catch(() => { });
+    }
+  }, [activeCoords, isZenSession, zenDestination, token]);
+
+
+  const formatDistance = (dist: number) => dist < 1 ? `${(dist * 1000).toFixed(0)} m` : `${dist.toFixed(1)} km`;
+  const formatDuration = (mins: number) => {
+    if (mins < 60) return `${Math.ceil(mins)} min`;
+    const hours = Math.floor(mins / 60);
+    const m = Math.ceil(mins % 60);
+    return `${hours} h ${m} m`;
   };
 
   return (
@@ -409,156 +480,172 @@ export default function MainScreen() {
       </SafeAreaView>
 
       <View style={styles.mapContainer}>
-        {isSearching ? (
-          <View style={styles.searchContainer}>
+        <MapView
+          ref={mapRef}
+          provider={PROVIDER_GOOGLE}
+          style={styles.map}
+          customMapStyle={nightMapStyle}
+          initialRegion={region}
+          showsUserLocation={false}
+          showsMyLocationButton={false}
+          showsCompass={false}
+          loadingEnabled={true}
+          mapPadding={{ top: 0, right: 0, bottom: 120, left: 0 }}
+          onLongPress={handleMapLongPress}
+        >
+          {activeCoords.latitude !== 0 && (
+            <Marker
+              coordinate={activeCoords}
+              anchor={{ x: 0.5, y: 0.5 }}
+              flat={true}
+              rotation={heading}
+            >
+              <View style={[styles.customMarkerGlow, isSimulating && { shadowColor: "#EF4444" }]}>
+                <Navigation
+                  color={isSimulating ? "#EF4444" : (isZenSession ? "#10B981" : "#8A2BE2")}
+                  size={45}
+                  fill={isSimulating ? "#EF4444" : (isZenSession ? "#10B981" : "#8A2BE2")}
+                />
+              </View>
+            </Marker>
+          )}
+
+          {friends.map((friend) => (
+            <Marker
+              key={friend.id}
+              coordinate={{ latitude: friend.latitude, longitude: friend.longitude }}
+              anchor={{ x: 0.5, y: 0.5 }}
+              flat={true}
+              rotation={friend.heading}
+              tracksViewChanges={false}
+              onPress={() => handleFriendClick(friend.id, friend.name)}
+            >
+              <View style={styles.friendMarkerContainer}>
+                <Navigation color="#10B981" size={30} fill="#10B981" />
+                <Text style={styles.friendMarkerText}>{friend.name}</Text>
+              </View>
+            </Marker>
+          ))}
+
+          {events?.map((event) => (
+            <Marker
+              key={event.id}
+              coordinate={{ latitude: event.latitude, longitude: event.longitude }}
+              tracksViewChanges={false}
+            >
+              <View style={styles.eventMarkerContainer}>
+                <Text style={styles.eventMarkerEmoji}>
+                  {event.type === 'police' ? '🚔' : event.type === 'pothole' ? '⚠️' : '💥'}
+                </Text>
+              </View>
+            </Marker>
+          ))}
+
+          {dislikedAreas?.map((area) => (
+            <Circle
+              key={area.id}
+              center={{ latitude: area.latitude, longitude: area.longitude }}
+              radius={200}
+              strokeColor="rgba(239, 68, 68, 0.5)"
+              fillColor="rgba(239, 68, 68, 0.2)"
+            />
+          ))}
+
+          {rendezvousPoint && (
+            <Marker coordinate={rendezvousPoint} anchor={{ x: 0.5, y: 0.5 }}>
+              <View style={styles.rendezvousMarker}>
+                <Users color="#FFF" size={24} />
+              </View>
+            </Marker>
+          )}
+
+          {groupDestination && (
+            <Marker coordinate={groupDestination} anchor={{ x: 0.5, y: 1 }}>
+              <View style={styles.groupDestinationMarker}>
+                <MapPin color="#FFF" size={28} />
+              </View>
+            </Marker>
+          )}
+
+          {currentDestination && routeOrigin && !isZenSession && (
+            <MapViewDirections
+              origin={routeOrigin}
+              destination={currentDestination}
+              waypoints={currentWaypoints.length > 0 ? currentWaypoints : undefined}
+              apikey={GOOGLE_API_KEY}
+              strokeWidth={8}
+              strokeColor="#8A2BE2"
+              mode="DRIVING"
+              precision="high"
+              optimizeWaypoints={true}
+              onReady={(result) => {
+                setRouteCoordinates(result.coordinates);
+                setRouteInfo({ distance: result.distance, duration: result.duration });
+                finishRerouting();
+              }}
+            />
+          )}
+
+          {stopDestination && (
+            <Marker coordinate={stopDestination} anchor={{ x: 0.5, y: 1 }}>
+              <View style={styles.stopDestinationMarker}>
+                <MapPin color="#FFF" size={20} />
+              </View>
+            </Marker>
+          )}
+
+          {isZenSession && zenDestination && (
+            <MapViewDirections
+              origin={activeCoords}
+              destination={zenDestination}
+              apikey={GOOGLE_API_KEY}
+              strokeWidth={8}
+              strokeColor="#10B981"
+              mode="DRIVING"
+              precision="high"
+              onReady={(result) => {
+                setRouteInfo({ distance: result.distance, duration: result.duration });
+              }}
+            />
+          )}
+        </MapView>
+      </View>
+
+      <Modal visible={isSearching} animationType="fade" transparent={true}>
+        <View style={[styles.searchContainer, { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)' }]}>
+          <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
             <SearchBar
-              key={searchSessionId}
-              placeholder="Unde mergem?"
+              placeholder="Where to?"
               onClose={closeSearch}
               onPlaceSelect={handlePlaceSelect}
+              userCoords={activeCoords}
             />
-          </View>
-        ) : (
-          <MapView
-            ref={mapRef}
-            provider={PROVIDER_GOOGLE}
-            style={styles.map}
-            customMapStyle={nightMapStyle}
-            initialRegion={region}
-            showsUserLocation={false}
-            showsMyLocationButton={false}
-            showsCompass={false}
-            loadingEnabled={true}
-            mapPadding={{ top: 0, right: 0, bottom: 120, left: 0 }}
-            onLongPress={handleMapLongPress}
-          >
-            {activeCoords.latitude !== 0 && (
-              <Marker
-                coordinate={activeCoords}
-                anchor={{ x: 0.5, y: 0.5 }}
-                flat={true}
-                rotation={heading}
-              >
-                <View style={[styles.customMarkerGlow, isSimulating && { shadowColor: "#EF4444" }]}>
-                  <Navigation
-                    color={isSimulating ? "#EF4444" : (isZenSession ? "#10B981" : "#8A2BE2")}
-                    size={45}
-                    fill={isSimulating ? "#EF4444" : (isZenSession ? "#10B981" : "#8A2BE2")}
-                  />
-                </View>
-              </Marker>
-            )}
-
-            {friends.map((friend) => (
-              <Marker
-                key={friend.id}
-                coordinate={{ latitude: friend.latitude, longitude: friend.longitude }}
-                anchor={{ x: 0.5, y: 0.5 }}
-                flat={true}
-                rotation={friend.heading}
-                tracksViewChanges={false}
-                onPress={() => handleFriendClick(friend.id, friend.name)}
-              >
-                <View style={styles.friendMarkerContainer}>
-                  <Navigation color="#10B981" size={30} fill="#10B981" />
-                  <Text style={styles.friendMarkerText}>{friend.name}</Text>
-                </View>
-              </Marker>
-            ))}
-
-            {events?.map((event) => (
-              <Marker
-                key={event.id}
-                coordinate={{ latitude: event.latitude, longitude: event.longitude }}
-                tracksViewChanges={false}
-              >
-                <View style={styles.eventMarkerContainer}>
-                  <Text style={styles.eventMarkerEmoji}>
-                    {event.type === 'police' ? '🚔' : event.type === 'pothole' ? '⚠️' : '💥'}
-                  </Text>
-                </View>
-              </Marker>
-            ))}
-
-            {dislikedAreas?.map((area) => (
-              <Circle
-                key={area.id}
-                center={{ latitude: area.latitude, longitude: area.longitude }}
-                radius={200}
-                strokeColor="rgba(239, 68, 68, 0.5)"
-                fillColor="rgba(239, 68, 68, 0.2)"
-              />
-            ))}
-
-            {rendezvousPoint && (
-              <Marker coordinate={rendezvousPoint} anchor={{ x: 0.5, y: 0.5 }}>
-                <View style={styles.rendezvousMarker}>
-                  <Users color="#FFF" size={24} />
-                </View>
-              </Marker>
-            )}
-
-            {groupDestination && (
-              <Marker coordinate={groupDestination} anchor={{ x: 0.5, y: 1 }}>
-                <View style={styles.groupDestinationMarker}>
-                  <MapPin color="#FFF" size={28} />
-                </View>
-              </Marker>
-            )}
-
-            {currentDestination && routeOrigin && !isZenSession && (
-              <MapViewDirections
-                origin={routeOrigin}
-                destination={currentDestination}
-                waypoints={currentWaypoints.length > 0 ? currentWaypoints : undefined}
-                apikey={GOOGLE_API_KEY}
-                strokeWidth={8}
-                strokeColor="#8A2BE2"
-                mode="DRIVING"
-                precision="high"
-                optimizeWaypoints={true}
-                onReady={(result) => {
-                  setRouteCoordinates(result.coordinates);
-                  finishRerouting();
-                }}
-              />
-            )}
-
-            {stopDestination && (
-              <Marker coordinate={stopDestination} anchor={{ x: 0.5, y: 1 }}>
-                <View style={styles.stopDestinationMarker}>
-                  <MapPin color="#FFF" size={20} />
-                </View>
-              </Marker>
-            )}
-
-            {isZenSession && zenCoordinates.length > 0 && (
-              <Polyline
-                coordinates={zenCoordinates}
-                strokeWidth={8}
-                strokeColor="#10B981"
-                lineCap="round"
-                lineJoin="round"
-              />
-            )}
-          </MapView>
-        )}
-      </View>
+          </SafeAreaView>
+        </View>
+      </Modal>
 
       {!isSearching && (
         <View style={styles.bottomWrapper}>
           {isNavigating && (
             <Animated.View style={[styles.cancelBackground, { opacity: cancelOpacity }]}>
               <XCircle color="white" size={32} />
-              <Text style={styles.cancelText}>ELIBEREAZĂ PENTRU A ANULA RUTA</Text>
+              <Text style={styles.cancelText}>Release to cancel the route</Text>
             </Animated.View>
           )}
 
           <Animated.View
-            style={[styles.bottomSection, { transform: [{ translateY: isNavigating ? panY : 0 }] }]}
+            style={[styles.bottomSection, { transform: [{ translateY: panY }] }]}
             {...(isNavigating ? panResponder.panHandlers : {})}
           >
             {isNavigating && <View style={styles.dragHandle} />}
+
+            {isNavigating && !isZenSession && routeInfo && (
+              <View style={styles.routeInfoBox}>
+                <Text style={styles.routeInfoText}>{formatDuration(routeInfo.duration)}</Text>
+                <Text style={styles.routeInfoDot}>•</Text>
+                <Text style={styles.routeInfoText}>{formatDistance(routeInfo.distance)}</Text>
+              </View>
+            )}
 
             <View style={styles.contentContainer}>
               <View style={{ flexDirection: 'row', gap: 15 }}>
@@ -577,21 +664,21 @@ export default function MainScreen() {
       <Modal visible={!!pendingSearch} transparent animationType="slide">
         <View style={styles.actionSheetOverlay}>
           <View style={styles.actionSheetContent}>
-            <Text style={styles.actionSheetTitle}>Ai deja un traseu activ</Text>
-            <Text style={styles.actionSheetSubtitle}>Ce dorești să faci cu {pendingSearch?.name}?</Text>
+            <Text style={styles.actionSheetTitle}>Active Route Existing</Text>
+            <Text style={styles.actionSheetSubtitle}>What do you want to do with {pendingSearch?.name}?</Text>
 
             <TouchableOpacity style={styles.actionBtnPrimary} onPress={handleSetNewDestination}>
               <Map color="#FFF" size={24} />
-              <Text style={styles.actionBtnTextPrimary}>Destinație Nouă (Înlocuiește)</Text>
+              <Text style={styles.actionBtnTextPrimary}>New Destination (Replace)</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.actionBtnSecondary} onPress={handleAddStop}>
               <MapPin color="#A855F7" size={24} />
-              <Text style={styles.actionBtnTextSecondary}>Adaugă ca Oprire (Stop)</Text>
+              <Text style={styles.actionBtnTextSecondary}>Add as Stop</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.actionBtnCancel} onPress={() => setPendingSearch(null)}>
-              <Text style={styles.actionBtnTextCancel}>Anulează</Text>
+              <Text style={styles.actionBtnTextCancel}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -721,6 +808,31 @@ const styles = StyleSheet.create({
     paddingBottom: 25,
   },
   centerButtonSpacer: { flex: 1, alignItems: "center" },
+  routeInfoBox: {
+    flexDirection: 'row',
+    alignSelf: 'center',
+    backgroundColor: '#111',
+    borderWidth: 1,
+    borderColor: '#333',
+    borderRadius: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    marginTop: 15,
+    marginBottom: 5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  routeInfoText: {
+    color: '#8A2BE2',
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  routeInfoDot: {
+    color: '#666',
+    fontSize: 15,
+    marginHorizontal: 10,
+    fontWeight: '900',
+  },
 
   stopDestinationMarker: {
     backgroundColor: '#F59E0B',

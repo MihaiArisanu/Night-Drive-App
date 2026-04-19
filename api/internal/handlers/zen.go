@@ -16,12 +16,14 @@ import (
 type ZenStartRequest struct {
 	Latitude  float64 `json:"latitude"`
 	Longitude float64 `json:"longitude"`
+	Heading   float64 `json:"heading"`
 }
 
 type ZenEngineRequest struct {
 	UserID     string  `json:"user_id"`
 	CurrentLat float64 `json:"current_lat"`
 	CurrentLng float64 `json:"current_lng"`
+	Heading    float64 `json:"heading"`
 }
 
 type ZenWaypoint struct {
@@ -35,16 +37,9 @@ type ZenEngineResponse struct {
 }
 
 type ZenSession struct {
-	Waypoint3 ZenWaypoint `json:"waypoint_3"`
-	Waypoint4 ZenWaypoint `json:"waypoint_4"`
-}
-
-type GoogleDirectionsResponse struct {
-	Routes []struct {
-		OverviewPolyline struct {
-			Points string `json:"points"`
-		} `json:"overview_polyline"`
-	} `json:"routes"`
+	Waypoints      []ZenWaypoint `json:"waypoints"`
+	CurrentWpIndex int           `json:"current_wp_index"`
+	IsColdStart    bool          `json:"is_cold_start"`
 }
 
 func haversine(lat1, lon1, lat2, lon2 float64) float64 {
@@ -57,11 +52,12 @@ func haversine(lat1, lon1, lat2, lon2 float64) float64 {
 	return R * c
 }
 
-func fetchZenWaypoints(userID string, lat, lng float64) (*ZenEngineResponse, error) {
+func fetchZenWaypoints(userID string, lat, lng, heading float64) (*ZenEngineResponse, error) {
 	reqBody := ZenEngineRequest{
 		UserID:     userID,
 		CurrentLat: lat,
 		CurrentLng: lng,
+		Heading:    heading,
 	}
 	jsonData, _ := json.Marshal(reqBody)
 
@@ -96,39 +92,6 @@ func fetchZenWaypoints(userID string, lat, lng float64) (*ZenEngineResponse, err
 	return &engineResp, nil
 }
 
-func fetchGoogleRoute(originLat, originLng float64, wps []ZenWaypoint) (string, error) {
-	apiKey := os.Getenv("GOOGLE_MAPS_API_KEY")
-	if len(wps) < 4 {
-		return "", fmt.Errorf("insufficient waypoints")
-	}
-
-	url := fmt.Sprintf(
-		"https://maps.googleapis.com/maps/api/directions/json?origin=%f,%f&destination=%f,%f&waypoints=%f,%f|%f,%f|%f,%f&key=%s",
-		originLat, originLng,
-		wps[3].Lat, wps[3].Lng,
-		wps[0].Lat, wps[0].Lng,
-		wps[1].Lat, wps[1].Lng,
-		wps[2].Lat, wps[2].Lng,
-		apiKey,
-	)
-
-	resp, err := http.Get(url)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	var dirResp GoogleDirectionsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&dirResp); err != nil {
-		return "", err
-	}
-
-	if len(dirResp.Routes) > 0 {
-		return dirResp.Routes[0].OverviewPolyline.Points, nil
-	}
-	return "", fmt.Errorf("no route found")
-}
-
 func StartZenModeHandler(rdb *redis.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, ok := r.Context().Value(UserIDKey).(string)
@@ -140,28 +103,32 @@ func StartZenModeHandler(rdb *redis.Client) http.HandlerFunc {
 		var req ZenStartRequest
 		json.NewDecoder(r.Body).Decode(&req)
 
-		engineResp, err := fetchZenWaypoints(userID, req.Latitude, req.Longitude)
+		engineResp, err := fetchZenWaypoints(userID, req.Latitude, req.Longitude, req.Heading)
 		if err != nil {
 			http.Error(w, "Zen Engine unreachable", http.StatusServiceUnavailable)
 			return
 		}
 
-		polyline, err := fetchGoogleRoute(req.Latitude, req.Longitude, engineResp.Waypoints)
-		if err != nil {
-			http.Error(w, "Routing failed", http.StatusInternalServerError)
+		if len(engineResp.Waypoints) < 1 {
+			http.Error(w, "No waypoints generated", http.StatusInternalServerError)
 			return
 		}
 
+		// Store all waypoints in Redis, start at index 0
 		session := ZenSession{
-			Waypoint3: engineResp.Waypoints[2],
-			Waypoint4: engineResp.Waypoints[3],
+			Waypoints:      engineResp.Waypoints,
+			CurrentWpIndex: 0,
+			IsColdStart:    engineResp.IsColdStart,
 		}
 		sessionBytes, _ := json.Marshal(session)
 		rdb.Set(context.Background(), "zen_session:"+userID, sessionBytes, 4*time.Hour)
 
+		// Return ONLY the first waypoint — client navigates one step at a time
+		firstWp := engineResp.Waypoints[0]
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"polyline":      polyline,
+			"next_lat":      firstWp.Lat,
+			"next_lng":      firstWp.Lng,
 			"is_cold_start": engineResp.IsColdStart,
 		})
 	}
@@ -200,28 +167,40 @@ func SyncZenLocationHandler(rdb *redis.Client) http.HandlerFunc {
 		var session ZenSession
 		json.Unmarshal([]byte(sessionData), &session)
 
-		dist := haversine(req.Latitude, req.Longitude, session.Waypoint3.Lat, session.Waypoint3.Lng)
+		currentWp := session.Waypoints[session.CurrentWpIndex]
+		dist := haversine(req.Latitude, req.Longitude, currentWp.Lat, currentWp.Lng)
+
+		w.Header().Set("Content-Type", "application/json")
 
 		if dist < 500.0 {
-			engineResp, err := fetchZenWaypoints(userID, session.Waypoint4.Lat, session.Waypoint4.Lng)
-			if err == nil && len(engineResp.Waypoints) >= 4 {
-				polyline, err := fetchGoogleRoute(session.Waypoint4.Lat, session.Waypoint4.Lng, engineResp.Waypoints)
-				if err == nil {
-					session.Waypoint3 = engineResp.Waypoints[2]
-					session.Waypoint4 = engineResp.Waypoints[3]
-					sessionBytes, _ := json.Marshal(session)
-					rdb.Set(ctx, key, sessionBytes, 4*time.Hour)
+			// Advance to next waypoint
+			nextIdx := session.CurrentWpIndex + 1
 
-					w.Header().Set("Content-Type", "application/json")
-					json.NewEncoder(w).Encode(map[string]interface{}{
-						"status":       "extended",
-						"new_polyline": polyline,
-					})
+			if nextIdx >= len(session.Waypoints) {
+				// Ran out of waypoints — generate a new set from current position
+				lastWp := session.Waypoints[len(session.Waypoints)-1]
+				engineResp, err := fetchZenWaypoints(userID, lastWp.Lat, lastWp.Lng, req.Heading)
+				if err != nil || len(engineResp.Waypoints) < 1 {
+					json.NewEncoder(w).Encode(map[string]string{"status": "active"})
 					return
 				}
+				session.Waypoints = engineResp.Waypoints
+				session.CurrentWpIndex = 0
+			} else {
+				session.CurrentWpIndex = nextIdx
 			}
-		}
 
-		json.NewEncoder(w).Encode(map[string]string{"status": "active"})
+			nextWp := session.Waypoints[session.CurrentWpIndex]
+			sessionBytes, _ := json.Marshal(session)
+			rdb.Set(ctx, key, sessionBytes, 4*time.Hour)
+
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":   "extended",
+				"next_lat": nextWp.Lat,
+				"next_lng": nextWp.Lng,
+			})
+		} else {
+			json.NewEncoder(w).Encode(map[string]string{"status": "active"})
+		}
 	}
 }

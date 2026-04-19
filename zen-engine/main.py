@@ -18,6 +18,7 @@ class ZenRequest(BaseModel):
     user_id: str
     current_lat: float
     current_lng: float
+    heading: float = 0.0
 
 class ZenResponse(BaseModel):
     waypoints: List[Waypoint]
@@ -59,14 +60,14 @@ async def generate_path(payload: ZenRequest):
     
     if len(history) < 50:
         is_cold_start = True
-        waypoints_tuples = geo_utils.generate_forward_path(payload.current_lat, payload.current_lng)
+        waypoints_tuples = geo_utils.generate_forward_path(payload.current_lat, payload.current_lng, heading=payload.heading)
     else:
         cluster_centroids = ml_engine.get_zen_clusters(history)
         valid_waypoints = geo_utils.filter_waypoints(cluster_centroids, bad_areas)
         
         if len(valid_waypoints) < 4:
             is_cold_start = True
-            waypoints_tuples = geo_utils.generate_forward_path(payload.current_lat, payload.current_lng)
+            waypoints_tuples = geo_utils.generate_forward_path(payload.current_lat, payload.current_lng, heading=payload.heading)
         else:
             waypoints_tuples = valid_waypoints[:4]
             

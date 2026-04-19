@@ -19,7 +19,7 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
     const cleanEndpoint = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
     const url = `${API_BASE_URL}/api${cleanEndpoint}`;
 
-    console.log(`🚀 Trimit cerere la: ${url}`);
+    console.log(`[API] Request: ${url}`);
 
     const response = await fetch(url, {
         ...options,
@@ -27,16 +27,21 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
     });
 
     const responseText = await response.text();
-    console.log(`📥 Serverul a răspuns cu: ${responseText}`);
+    console.log(`[API] Response: ${responseText}`);
 
     if (!response.ok) {
         throw new Error(responseText || 'Error from NightDrive server');
     }
 
+
+    if (response.status === 204 || responseText.trim() === '') {
+        return null;
+    }
+
     try {
         return JSON.parse(responseText);
     } catch (e) {
-        console.error("❌ Eroare la parsare JSON. Serverul a trimis text, nu obiect.");
-        throw new Error("Serverul nu a trimis un format JSON valid.");
+        console.error("[API] JSON parse error. Server returned non-JSON response.");
+        throw new Error("Server did not return a valid JSON response.");
     }
 };

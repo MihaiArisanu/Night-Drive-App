@@ -3,7 +3,6 @@ import { View, Text, TouchableOpacity, StyleSheet, Keyboard, ScrollView, Activit
 import { Search, X, MapPin, Zap, Fuel, Star, Bookmark } from 'lucide-react-native';
 import { GooglePlacesAutocomplete, GooglePlacesAutocompleteRef } from 'react-native-google-places-autocomplete';
 import { GOOGLE_API_GENERAL_KEY } from '@env';
-import { useLocation } from '../hooks/useLocation';
 import { useNearbyPlaces, PlaceResult } from '../hooks/useNearbyPlaces';
 import { useSavedPlaces } from '../hooks/useSavedPlaces';
 
@@ -13,17 +12,17 @@ export interface SearchBarProps {
     searchFilter?: 'address' | 'establishment' | 'geocode' | 'regions' | 'cities';
     placeholder?: string;
     isCompact?: boolean;
+    userCoords: { latitude: number; longitude: number } | null;
 }
 
 type SearchTab = 'none' | 'gas' | 'ev' | 'gas_ev' | 'saved';
 
-export function SearchBar({ onClose, onPlaceSelect, searchFilter, placeholder = "Where do you want to go?", isCompact = false }: SearchBarProps) {
+export function SearchBar({ onClose, onPlaceSelect, searchFilter, placeholder = "Where do you want to go?", isCompact = false, userCoords }: SearchBarProps) {
     const [activeTab, setActiveTab] = useState<SearchTab>('none');
-    const { coords } = useLocation();
 
     const googleRef = useRef<GooglePlacesAutocompleteRef>(null);
 
-    const { places, isLoading, error } = useNearbyPlaces(coords?.latitude || 0, coords?.longitude || 0, activeTab);
+    const { places, isLoading, error } = useNearbyPlaces(userCoords?.latitude || 0, userCoords?.longitude || 0, activeTab);
     const { savedPlaces, isLoadingPlaces, savePlace } = useSavedPlaces();
 
     const [placeToSave, setPlaceToSave] = useState<{ name: string; lat: number; lng: number } | null>(null);
@@ -148,7 +147,6 @@ export function SearchBar({ onClose, onPlaceSelect, searchFilter, placeholder = 
                             const city = data.structured_formatting?.secondary_text || "";
                             const name = data.structured_formatting ? data.structured_formatting.main_text : data.description;
 
-                            googleRef.current?.clear();
                             Keyboard.dismiss();
 
                             onPlaceSelect(
@@ -162,10 +160,10 @@ export function SearchBar({ onClose, onPlaceSelect, searchFilter, placeholder = 
                     query={{
                         key: GOOGLE_API_GENERAL_KEY,
                         language: "ro",
-                        components: "country:ro",
                         ...(searchFilter ? { types: searchFilter } : {})
                     }}
                     fetchDetails={true}
+                    keyboardShouldPersistTaps="handled"
                     enablePoweredByContainer={false}
                     styles={isCompact ? compactSearchBarStyles : searchBarStyles}
                     textInputProps={{ placeholderTextColor: "#888", autoFocus: !isCompact }}
@@ -173,7 +171,7 @@ export function SearchBar({ onClose, onPlaceSelect, searchFilter, placeholder = 
                         <View style={styles.iconPadding}><Search color="#888" size={20} /></View>
                     )}
                     renderRightButton={() => (
-                        <TouchableOpacity onPress={handleClearAndClose} style={styles.iconPadding}><X color="#888" size={24} /></TouchableOpacity>
+                        <TouchableOpacity onPress={onClose} style={styles.iconPadding}><X color="#888" size={24} /></TouchableOpacity>
                     )}
                     renderRow={(data) => (
                         <View style={styles.resultRow}>
@@ -343,7 +341,8 @@ const styles = StyleSheet.create({
 
 const searchBarStyles = {
     container: {
-        flex: 1
+        flex: 1,
+        backgroundColor: '#000',
     },
     textInputContainer: {
         backgroundColor: "#111",
@@ -357,52 +356,65 @@ const searchBarStyles = {
         backgroundColor: "transparent"
     },
     listView: {
-        backgroundColor: "#000"
+        backgroundColor: "#000",
     },
     row: {
         backgroundColor: "#000",
         borderBottomColor: "#222",
-        borderBottomWidth: 0.5
+        borderBottomWidth: 0.5,
+        padding: 15,
     },
+    description: {
+        color: '#FFF'
+    }
 };
 
 const compactSearchBarStyles = {
     container: {
-        flex: 0
+        flex: 0,
+        backgroundColor: 'transparent',
     },
     textInputContainer: {
         backgroundColor: "#111",
         height: 50,
         borderRadius: 12,
         borderWidth: 1,
-        borderColor: "#222"
+        borderColor: "#222",
+        marginHorizontal: 0,
+        marginTop: 10,
+        flexDirection: 'row',
+        alignItems: 'center',
     },
     textInput: {
+        flex: 1,
         color: "#FFF",
         fontSize: 16,
         backgroundColor: "transparent",
-        margin: 0
+        margin: 0,
+        padding: 0,
+        height: 50
     },
     listView: {
+        position: 'absolute',
+        top: 65,
+        left: 0,
+        right: 0,
         backgroundColor: "#111",
         borderRadius: 12,
-        marginTop: 5,
+        marginHorizontal: 0,
         borderWidth: 1,
         borderColor: "#333",
         zIndex: 1000,
-        position: 'absolute' as 'absolute',
-        top: 55,
-        width: '100%'
+        elevation: 10
     },
     row: {
         backgroundColor: "#111",
-        padding: 13,
-        height: 50,
+        padding: 15,
         borderBottomWidth: 1,
         borderBottomColor: '#222'
     },
     description: {
-        color: '#CCC'
+        color: '#FFF'
     },
     separator: {
         backgroundColor: 'transparent'

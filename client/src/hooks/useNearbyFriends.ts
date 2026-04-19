@@ -9,17 +9,19 @@ export interface FriendLocation {
     heading: number;
 }
 
-export function useNearbyFriends(userLat: number | null, userLng: number | null, isDNDActive: boolean) {
+export function useNearbyFriends(userLat: number | null, userLng: number | null, isDNDActive: boolean, token: string | null) {
     const [friends, setFriends] = useState<FriendLocation[]>([]);
 
     const fetchFriends = useCallback(async () => {
-        if (!userLat || !userLng || isDNDActive) {
+        if (!userLat || !userLng || isDNDActive || !token) {
             setFriends([]);
             return;
         }
 
         try {
-            const response = await fetch(`${API_BASE_URL}/api/friends/nearby?lat=${userLat}&lng=${userLng}`);
+            const response = await fetch(`${API_BASE_URL}/api/friends/nearby?lat=${userLat}&lng=${userLng}`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
             if (!response.ok) throw new Error('Failed to fetch friends');
 
             const data = await response.json();
@@ -28,7 +30,7 @@ export function useNearbyFriends(userLat: number | null, userLng: number | null,
             }
         } catch (error) {
         }
-    }, [userLat, userLng, isDNDActive]);
+    }, [userLat, userLng, isDNDActive, token]);
 
     useEffect(() => {
         fetchFriends();

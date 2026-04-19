@@ -1,4 +1,5 @@
 import math
+import random
 from typing import List
 from shapely.geometry import Point
 
@@ -10,12 +11,37 @@ def sort_waypoints_clockwise(center_lat: float, center_lng: float, points: List[
     return sorted(points, key=angle_from_center, reverse=True)
 
 def generate_cold_start_loop(lat: float, lng: float, radius: float = 0.05) -> List[tuple]:
-    angles = [0, 120, 240]
+    base = random.uniform(0, 360)
+    angles = [base, base + 120, base + 240]
     waypoints = []
     for angle in angles:
         rad = math.radians(angle)
-        waypoints.append((lat + (radius * math.cos(rad)), lng + (radius * math.sin(rad))))
+        r = radius * random.uniform(0.8, 1.2)
+        waypoints.append((lat + (r * math.cos(rad)), lng + (r * math.sin(rad))))
     return waypoints
+
+def generate_forward_path(lat: float, lng: float, radius: float = 0.04, heading: float = 0.0) -> List[tuple]:
+    base_math = 90.0 - heading
+
+    offsets = [-85, -28, 28, 85]
+    random.shuffle(offsets)
+    waypoints = []
+    for offset in offsets:
+        angle_math = math.radians(base_math + offset)
+        r = radius * random.uniform(0.7, 1.3)
+        waypoints.append((lat + (r * math.cos(angle_math)), lng + (r * math.sin(angle_math))))
+    return waypoints
+
+def sort_as_path(origin_lat: float, origin_lng: float, points: List[tuple]) -> List[tuple]:
+    remaining = list(points)
+    ordered = []
+    current = (origin_lat, origin_lng)
+    while remaining:
+        nearest = min(remaining, key=lambda p: math.hypot(p[0] - current[0], p[1] - current[1]))
+        ordered.append(nearest)
+        remaining.remove(nearest)
+        current = nearest
+    return ordered
 
 def filter_waypoints(waypoints: List[tuple], bad_records: List[dict]) -> List[tuple]:
     exclusion_zones = [

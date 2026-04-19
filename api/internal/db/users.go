@@ -147,3 +147,17 @@ func UpdateFCMToken(db *sql.DB, userID string, token string) error {
 	}
 	return nil
 }
+
+func UpdateUserLocation(dbConn *sql.DB, userID string, lat, lng, heading, speed float64, isDnd bool) error {
+	query := `
+		UPDATE users
+		SET location       = ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
+		    heading        = $3,
+		    speed_kmh      = $4,
+		    is_dnd         = $5,
+		    last_active_at = NOW()
+		WHERE id = $6
+	`
+	_, err := dbConn.Exec(query, lng, lat, heading, speed, isDnd, userID)
+	return err
+}
