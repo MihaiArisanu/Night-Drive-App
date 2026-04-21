@@ -12,6 +12,7 @@ import EditProfileScreen from './src/screens/EditProfileScreen';
 import SavedPlacesScreen from './src/screens/SavedPlacesScreen';
 import DislikedStreetsScreen from './src/screens/DislikedStreetsScreen';
 import OnboardingScreen from './src/screens/OnboardingScreen';
+import FriendsScreen from './src/screens/FriendsScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -33,6 +34,7 @@ export default function App() {
           <Stack.Screen name="EditProfile" component={EditProfileScreen} options={{ headerShown: false }} />
           <Stack.Screen name="SavedPlaces" component={SavedPlacesScreen} />
           <Stack.Screen name="DislikedStreets" component={DislikedStreetsScreen} />
+          <Stack.Screen name="Friends" component={FriendsScreen} />
           <Stack.Screen name="Onboarding" component={OnboardingScreen} options={{ animation: 'fade' }} />
           <Stack.Screen name="Main" component={MainScreen} />
           <Stack.Screen

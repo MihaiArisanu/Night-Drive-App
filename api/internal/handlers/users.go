@@ -102,10 +102,94 @@ func LoginHandler(database *sql.DB, hub *ws.Hub) http.HandlerFunc {
 			return
 		}
 
+		refreshToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+			"user_id": user.ID,
+			"type":    "refresh",
+			"exp":     time.Now().Add(30 * 24 * time.Hour).Unix(),
+		})
+		refreshTokenString, err := refreshToken.SignedString(jwtKey)
+		if err != nil {
+			http.Error(w, "Could not generate refresh token", http.StatusInternalServerError)
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
-			"token":   tokenString,
+			"access_token":  tokenString,
+			"refresh_token": refreshTokenString,
+			"user_id":       user.ID,
+		})
+	}
+}
+
+func RefreshTokenHandler(database *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req struct {
+			RefreshToken string `json:"refresh_token"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request payload", http.StatusBadRequest)
+			return
+		}
+
+		claims := jwt.MapClaims{}
+		token, err := jwt.ParseWithClaims(req.RefreshToken, claims, func(token *jwt.Token) (interface{}, error) {
+			return jwtKey, nil
+		})
+
+		if err != nil || !token.Valid {
+			http.Error(w, "Invalid or expired refresh token", http.StatusUnauthorized)
+			return
+		}
+
+		if claims["type"] != "refresh" {
+			http.Error(w, "Invalid token type", http.StatusUnauthorized)
+			return
+		}
+
+		userID, ok := claims["user_id"].(string)
+		if !ok {
+			http.Error(w, "Invalid token claims", http.StatusUnauthorized)
+			return
+		}
+
+		// Optionally verify if user still exists
+		user, err := db.GetUserByID(database, userID)
+		if err != nil {
+			http.Error(w, "User not found", http.StatusUnauthorized)
+			return
+		}
+
+		newAccessToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 			"user_id": user.ID,
+			"exp":     time.Now().Add(72 * time.Hour).Unix(),
+		})
+		newAccessTokenString, err := newAccessToken.SignedString(jwtKey)
+		if err != nil {
+			http.Error(w, "Could not generate new access token", http.StatusInternalServerError)
+			return
+		}
+
+		newRefreshToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+			"user_id": user.ID,
+			"type":    "refresh",
+			"exp":     time.Now().Add(30 * 24 * time.Hour).Unix(),
+		})
+		newRefreshTokenString, err := newRefreshToken.SignedString(jwtKey)
+		if err != nil {
+			http.Error(w, "Could not generate new refresh token", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"access_token":  newAccessTokenString,
+			"refresh_token": newRefreshTokenString,
 		})
 	}
 }

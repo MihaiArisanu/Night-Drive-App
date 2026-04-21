@@ -14,9 +14,14 @@ if linkage != nil
   use_frameworks! :linkage => linkage.to_sym
 end
 
+rn_maps_path = '../node_modules/react-native-maps'
+
 target 'NightDriveV2' do
   use_modular_headers!
   config = use_native_modules!
+
+  pod 'react-native-maps', :path => rn_maps_path
+  pod 'react-native-maps/Google', :path => rn_maps_path
 
   use_react_native!(
     :path => config[:reactNativePath],

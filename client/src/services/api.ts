@@ -2,18 +2,39 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_BASE_URL } from '@env';
 
 export const AuthStorage = {
-    saveToken: async (token: string) => await AsyncStorage.setItem('jwt_token', token),
-    getToken: async () => await AsyncStorage.getItem('jwt_token'),
-    removeToken: async () => await AsyncStorage.removeItem('jwt_token'),
+    saveTokens: async (accessToken: string, refreshToken: string) => {
+        await AsyncStorage.setItem('jwt_token', accessToken);
+        await AsyncStorage.setItem('refresh_token', refreshToken);
+    },
+    getAccessToken: async () => await AsyncStorage.getItem('jwt_token'),
+    getRefreshToken: async () => await AsyncStorage.getItem('refresh_token'),
+    clearTokens: async () => {
+        await AsyncStorage.removeItem('jwt_token');
+        await AsyncStorage.removeItem('refresh_token');
+    },
+};
+
+let isRefreshing = false;
+let failedQueue: { resolve: (token: string) => void, reject: (err: any) => void }[] = [];
+
+const processQueue = (error: any, token: string | null = null) => {
+    failedQueue.forEach(prom => {
+        if (error) {
+            prom.reject(error);
+        } else {
+            prom.resolve(token!);
+        }
+    });
+    failedQueue = [];
 };
 
 export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
-    const token = await AuthStorage.getToken();
+    const token = await AuthStorage.getAccessToken();
 
-    const headers = {
+    const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...options.headers,
+        ...(options.headers as Record<string, string>),
     };
 
     const cleanEndpoint = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
@@ -21,10 +42,63 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
 
     console.log(`[API] Request: ${url}`);
 
-    const response = await fetch(url, {
-        ...options,
-        headers,
-    });
+    let response = await fetch(url, { ...options, headers });
+
+    if (response.status === 401) {
+        console.log(`[API] 401 Unauthorized la ${cleanEndpoint}. Încercăm Refresh...`);
+
+        const refreshToken = await AuthStorage.getRefreshToken();
+
+        if (!refreshToken) {
+            await AuthStorage.clearTokens();
+            throw new Error("Session expired. Please log in again.");
+        }
+
+        if (isRefreshing) {
+            try {
+                const newToken = await new Promise<string>((resolve, reject) => {
+                    failedQueue.push({ resolve, reject });
+                });
+                headers.Authorization = `Bearer ${newToken}`;
+                response = await fetch(url, { ...options, headers });
+            } catch (err) {
+                throw err;
+            }
+        } else {
+            isRefreshing = true;
+            try {
+                const refreshUrl = `${API_BASE_URL}/api/auth/refresh`;
+                const refreshResponse = await fetch(refreshUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ refresh_token: refreshToken })
+                });
+
+                if (!refreshResponse.ok) {
+                    throw new Error('Refresh Token invalid sau expirat.');
+                }
+
+                const refreshData = await refreshResponse.json();
+
+                const newAccessToken = refreshData.access_token;
+                const newRefreshToken = refreshData.refresh_token || refreshToken;
+
+                await AuthStorage.saveTokens(newAccessToken, newRefreshToken);
+
+                isRefreshing = false;
+                processQueue(null, newAccessToken);
+
+                headers.Authorization = `Bearer ${newAccessToken}`;
+                response = await fetch(url, { ...options, headers });
+
+            } catch (refreshErr) {
+                isRefreshing = false;
+                processQueue(refreshErr, null);
+                await AuthStorage.clearTokens();
+                throw new Error("Session expired. Please log in again.");
+            }
+        }
+    }
 
     const responseText = await response.text();
     console.log(`[API] Response: ${responseText}`);
@@ -32,7 +106,6 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
     if (!response.ok) {
         throw new Error(responseText || 'Error from NightDrive server');
     }
-
 
     if (response.status === 204 || responseText.trim() === '') {
         return null;

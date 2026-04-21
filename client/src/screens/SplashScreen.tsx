@@ -8,7 +8,7 @@ export default function SplashScreen({ navigation }: any) {
     useEffect(() => {
         const bootApp = async () => {
             try {
-                const token = await AuthStorage.getToken();
+                const token = await AuthStorage.getAccessToken();
 
                 if (token) {
                     useSettingsStore.getState().setToken(token);

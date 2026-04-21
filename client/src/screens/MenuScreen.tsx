@@ -76,7 +76,7 @@ export default function MenuScreen({ navigation }: any) {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+        <TouchableOpacity onPress={() => navigation.navigate("Main")} style={styles.backButton}>
           <ArrowLeft color="white" size={28} />
           <Text style={styles.backText}>BACK</Text>
         </TouchableOpacity>
@@ -132,10 +132,13 @@ export default function MenuScreen({ navigation }: any) {
         )}
 
         <View style={styles.menuList}>
-          <TouchableOpacity style={styles.menuItem} onPress={() => setIsAddFriendVisible(true)}>
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => navigation.navigate('Friends')}
+          >
             <View style={styles.menuItemLeft}>
               <UserPlus color="#A855F7" size={24} />
-              <Text style={styles.menuItemText}>ADD FRIEND</Text>
+              <Text style={styles.menuItemText}>Friends</Text>
             </View>
           </TouchableOpacity>
 
@@ -274,17 +277,17 @@ export default function MenuScreen({ navigation }: any) {
               <View style={[
                 styles.feedbackRow,
                 feedback.type === 'success' && styles.feedbackSuccess,
-                feedback.type === 'error'   && styles.feedbackError,
-                feedback.type === 'info'    && styles.feedbackInfo,
+                feedback.type === 'error' && styles.feedbackError,
+                feedback.type === 'info' && styles.feedbackInfo,
               ]}>
                 {feedback.type === 'success' && <CheckCircle color="#10B981" size={16} />}
-                {feedback.type === 'error'   && <AlertCircle color="#EF4444" size={16} />}
-                {feedback.type === 'info'    && <Info color="#F59E0B" size={16} />}
+                {feedback.type === 'error' && <AlertCircle color="#EF4444" size={16} />}
+                {feedback.type === 'info' && <Info color="#F59E0B" size={16} />}
                 <Text style={[
                   styles.feedbackText,
                   feedback.type === 'success' && { color: '#10B981' },
-                  feedback.type === 'error'   && { color: '#EF4444' },
-                  feedback.type === 'info'    && { color: '#F59E0B' },
+                  feedback.type === 'error' && { color: '#EF4444' },
+                  feedback.type === 'info' && { color: '#F59E0B' },
                 ]}>{feedback.text}</Text>
               </View>
             )}

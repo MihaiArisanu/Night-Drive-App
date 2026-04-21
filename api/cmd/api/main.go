@@ -42,6 +42,7 @@ func main() {
 
 	mux.HandleFunc("/api/users", handlers.CreateUserHandler(database))
 	mux.HandleFunc("/api/login", handlers.LoginHandler(database, hub))
+	mux.HandleFunc("/api/auth/refresh", handlers.RefreshTokenHandler(database))
 	mux.HandleFunc("/api/events/nearby", handlers.GetNearbyEventsHandler(database))
 	mux.HandleFunc("/api/users/search", handlers.RequireAuth(handlers.SearchUserHandler(database)))
 	mux.HandleFunc("/api/users/me", handlers.RequireAuth(handlers.GetUserMeHandler(database)))

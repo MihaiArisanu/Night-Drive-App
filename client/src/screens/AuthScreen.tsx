@@ -39,8 +39,8 @@ export default function AuthScreen({ route, navigation }: any) {
                     body: JSON.stringify({ email: email.trim(), password }),
                 });
 
-                await AuthStorage.saveToken(data.token);
-                useSettingsStore.getState().setToken(data.token);
+                await AuthStorage.saveTokens(data.access_token, data.refresh_token);
+                useSettingsStore.getState().setToken(data.access_token);
                 useSettingsStore.getState().setUserId(data.user_id);
 
                 navigation.replace('Main');
