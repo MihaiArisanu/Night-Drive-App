@@ -93,25 +93,26 @@ func SearchUserByTag(dbConn *sql.DB, tag string) (*UserSearchResponse, error) {
 	return user, nil
 }
 
-func GetNearbyActiveUsers(dbConn *sql.DB, lat, lng float64) ([]models.NearbyUser, error) {
+func GetNearbyActiveUsers(dbConn *sql.DB, lat, lng float64, userID string) ([]models.NearbyUser, error) {
 	query := `
 		SELECT 
-			id, 
-			username as name, 
-			ST_Y(location::geometry) as latitude, 
-			ST_X(location::geometry) as longitude, 
-			COALESCE(heading, 0.0) as heading
-		FROM users
-		WHERE is_dnd = false
-		  AND location IS NOT NULL
+			u.id, 
+			u.username as name, 
+			ST_Y(u.location::geometry) as latitude, 
+			ST_X(u.location::geometry) as longitude, 
+			COALESCE(u.heading, 0.0) as heading
+		FROM users u
+		JOIN friendships f ON (f.user_id_1 = u.id AND f.user_id_2 = $3) OR (f.user_id_1 = $3 AND f.user_id_2 = u.id)
+		WHERE u.is_dnd = false
+		  AND u.location IS NOT NULL
 		  AND ST_DWithin(
-			location, 
+			u.location, 
 			ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, 
-			10000
+			50000
 		  )
 	`
 
-	rows, err := dbConn.Query(query, lng, lat)
+	rows, err := dbConn.Query(query, lng, lat, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query nearby users: %v", err)
 	}
@@ -153,11 +154,9 @@ func UpdateUserLocation(dbConn *sql.DB, userID string, lat, lng, heading, speed 
 		UPDATE users
 		SET location       = ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
 		    heading        = $3,
-		    speed_kmh      = $4,
-		    is_dnd         = $5,
-		    last_active_at = NOW()
-		WHERE id = $6
+		    is_dnd         = $4
+		WHERE id = $5
 	`
-	_, err := dbConn.Exec(query, lng, lat, heading, speed, isDnd, userID)
+	_, err := dbConn.Exec(query, lng, lat, heading, isDnd, userID)
 	return err
 }

@@ -156,12 +156,19 @@ export function SearchBar({ onClose, onPlaceSelect, searchFilter, placeholder = 
                             );
                         }
                     }}
-                    onFail={(error) => console.error("❌ EROARE GOOGLE PLACES:", error)}
+                    onFail={(error) => {
+                        console.error("❌ EROARE GOOGLE PLACES:", error);
+                        alert(`Places API Error: ${error}`);
+                    }}
                     query={{
                         key: GOOGLE_API_GENERAL_KEY,
                         language: "ro",
+                        location: userCoords ? `${userCoords.latitude},${userCoords.longitude}` : undefined,
+                        radius: 50000,
                         ...(searchFilter ? { types: searchFilter } : {})
                     }}
+                    debounce={300}
+                    minLength={2}
                     fetchDetails={true}
                     keyboardShouldPersistTaps="handled"
                     enablePoweredByContainer={false}
@@ -356,6 +363,7 @@ const searchBarStyles = {
         backgroundColor: "transparent"
     },
     listView: {
+        flex: 1,
         backgroundColor: "#000",
     },
     row: {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/MihaiArisanu/nightdrive-backend/internal/models"
 	"github.com/MihaiArisanu/nightdrive-backend/internal/ws"
+	"github.com/google/uuid"
 )
 
 func AddGroupStopHandler(db *sql.DB, hub *ws.Hub) http.HandlerFunc {
@@ -67,5 +68,67 @@ func AddGroupStopHandler(db *sql.DB, hub *ws.Hub) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(map[string]string{"status": "Stop added and broadcasted"})
+	}
+}
+
+func InviteGroupHandler(hub *ws.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		userID, ok := r.Context().Value(UserIDKey).(string)
+		if !ok || userID == "" {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		var req models.InviteRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		groupID := uuid.New().String()
+
+		wsMessage := map[string]interface{}{
+			"type": "RIDE_INVITE",
+			"payload": map[string]interface{}{
+				"friendName": req.SenderName,
+				"distance":   "< 1 km",
+				"eta":        "1 min",
+				"groupId":    groupID,
+			},
+		}
+
+		wsBytes, err := json.Marshal(wsMessage)
+		if err == nil {
+			hub.SendToUser(req.TargetUserId, wsBytes)
+		} else {
+			log.Printf("Failed to marshal invite WS message: %v", err)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"groupId": groupID,
+		})
+	}
+}
+
+func JoinGroupHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+		})
 	}
 }

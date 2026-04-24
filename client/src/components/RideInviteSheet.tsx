@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Animated, PanResponder, Dimensions } from 'react-native';
 import { User, MapPin, X } from 'lucide-react-native';
 
@@ -15,7 +15,7 @@ interface RideInviteSheetProps {
 
 export function RideInviteSheet({ isVisible, friendName, distance, eta, onAccept, onDecline }: RideInviteSheetProps) {
     const pan = useRef(new Animated.ValueXY()).current;
-    const sliderWidth = width - 80;
+    const sliderWidth = width - 50;
     const thumbWidth = 60;
 
     const panResponder = useRef(
@@ -41,6 +41,18 @@ export function RideInviteSheet({ isVisible, friendName, distance, eta, onAccept
             },
         })
     ).current;
+
+    useEffect(() => {
+        if (isVisible) {
+            pan.setValue({ x: 0, y: 0 });
+            const timer = setTimeout(() => {
+                onDecline();
+            }, 10000);
+            return () => clearTimeout(timer);
+        } else {
+            pan.setValue({ x: 0, y: 0 });
+        }
+    }, [isVisible, onDecline, pan]);
 
     if (!isVisible) return null;
 

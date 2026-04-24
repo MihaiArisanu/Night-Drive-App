@@ -1,0 +1,1 @@
+DELETE FROM users WHERE email LIKE '%@test.nightdrive.ro';

@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash VARCHAR(255) NOT NULL,
     points INT DEFAULT 0,
     trust_score FLOAT DEFAULT 100.0,
+    avatar_url VARCHAR(255),
     location GEOGRAPHY(Point, 4326),
     heading FLOAT DEFAULT 0.0,
     is_dnd BOOLEAN DEFAULT false,

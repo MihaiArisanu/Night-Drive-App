@@ -51,7 +51,12 @@ func main() {
 	mux.HandleFunc("/api/events", handlers.RequireAuth(handlers.CreateEventHandler(database, hub)))
 
 	mux.HandleFunc("/api/events/vote", handlers.RequireAuth(handlers.VoteEventHandler(database)))
+	mux.HandleFunc("/api/friends", handlers.RequireAuth(handlers.GetAllFriendsHandler(database)))
 	mux.HandleFunc("/api/friends/nearby", handlers.RequireAuth(handlers.GetNearbyFriendsHandler(database)))
+	mux.HandleFunc("/api/friends/request", handlers.RequireAuth(handlers.SendFriendRequestHandler(database)))
+	mux.HandleFunc("/api/friends/requests", handlers.RequireAuth(handlers.GetFriendRequestsHandler(database)))
+	mux.HandleFunc("/api/friends/requests/{id}/respond", handlers.RequireAuth(handlers.RespondFriendRequestHandler(database)))
+
 	mux.HandleFunc("/api/voice/upload", handlers.RequireAuth(handlers.UploadVoiceHandler(hub)))
 	mux.HandleFunc("/api/users/places", handlers.RequireAuth(handlers.PlacesHandler(database)))
 	mux.HandleFunc("/api/users/places/{id}", handlers.RequireAuth(handlers.PlaceByIDHandler(database)))
@@ -67,6 +72,8 @@ func main() {
 	mux.HandleFunc("/api/users/fcm", handlers.RequireAuth(handlers.UpdateFCMTokenHandler(database)))
 
 	mux.HandleFunc("/api/groups/{id}/stop", handlers.RequireAuth(handlers.AddGroupStopHandler(database, hub)))
+	mux.HandleFunc("/api/groups/invite", handlers.RequireAuth(handlers.InviteGroupHandler(hub)))
+	mux.HandleFunc("/api/groups/{id}/join", handlers.RequireAuth(handlers.JoinGroupHandler()))
 
 	mux.HandleFunc("/api/ws", func(w http.ResponseWriter, r *http.Request) {
 		handlers.ServeWS(hub, w, r)
@@ -75,7 +82,7 @@ func main() {
 	mux.HandleFunc("/api/users/avatar", handlers.RequireAuth(handlers.UploadAvatarHandler(database)))
 
 	port := ":8080"
-	log.Printf("Starting backend server on http://192.168.100.225%s\n", port)
+	log.Printf("Starting backend server on http://192.168.100.177%s\n", port)
 
 	handlerWithCORS := handlers.CORSMiddleware(mux)
 

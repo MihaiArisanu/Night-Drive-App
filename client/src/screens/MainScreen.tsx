@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from "react";
-import { View, Text, TouchableOpacity, Keyboard, Platform, PermissionsAndroid, StyleSheet, Modal, Animated, PanResponder } from "react-native";
+import { View, Text, TouchableOpacity, Keyboard, Platform, PermissionsAndroid, StyleSheet, Modal, Animated, PanResponder, Alert } from "react-native";
 import MapView, { PROVIDER_GOOGLE, Marker, Circle, Polyline } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Search, MapPin, Navigation, Users, LocateFixed, Map, XCircle } from "lucide-react-native";
+import { Search, MapPin, Navigation, Users, LocateFixed, Map, XCircle, Mic } from "lucide-react-native";
 import Geolocation from "react-native-geolocation-service";
 import MapViewDirections from 'react-native-maps-directions';
+import Tts from 'react-native-tts';
 import { useKeepAwake } from '@sayem314/react-native-keep-awake';
 
 import { AddEventButton } from "../components/AddEventButton";
@@ -32,20 +33,23 @@ import { useTelemetry } from '../hooks/useTelemetry';
 import { useActiveRouteSync } from '../hooks/useActiveRouteSync';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { useZenSessionSync } from '../hooks/useZenSessionSync';
-import { decodePolyline } from '../utils/polyline';
 
 import { useSettingsStore } from '../store/useSettingsStore';
 
 const GOOGLE_API_KEY = GOOGLE_API_GENERAL_KEY;
+
+const globalNotifiedFriends = new Set<string>();
 
 interface InviteData {
   friendName?: string;
   senderName?: string;
   distance: string;
   eta: string;
-  groupId: string;
+  groupId?: string;
   othersCount?: number;
   message?: string;
+  isLocalInvite?: boolean;
+  friendId?: string;
 }
 
 export default function MainScreen() {
@@ -66,6 +70,7 @@ export default function MainScreen() {
   const [isSearching, setIsSearching] = useState(false);
   const [searchSessionId, setSearchSessionId] = useState(0);
   const [pendingSearch, setPendingSearch] = useState<{ coords: { latitude: number, longitude: number }, name: string } | null>(null);
+  const [isSafetyLockVisible, setIsSafetyLockVisible] = useState(false);
 
   const [isZenSession, setIsZenSession] = useState(false);
   const [zenDestination, setZenDestination] = useState<{ latitude: number, longitude: number } | null>(null);
@@ -175,7 +180,30 @@ export default function MainScreen() {
 
 
   const handleAcceptRide = async () => {
-    if (!inviteData?.groupId) return;
+    if (inviteData?.isLocalInvite) {
+      if (!userName || !userId || !inviteData.friendId) {
+        setShowRideInvite(false);
+        return;
+      }
+      try {
+        const result = await sendInvite(inviteData.friendId, userName, activeCoords.latitude, activeCoords.longitude);
+        if (result.success && result.groupId) {
+          setActiveGroupId(result.groupId);
+          if (!currentDestination && !isZenSession) {
+            toggleZenSession();
+          }
+        }
+      } catch (err) {
+        console.error("Failed to invite local friend:", err);
+      }
+      setShowRideInvite(false);
+      return;
+    }
+
+    if (!inviteData?.groupId) {
+      setShowRideInvite(false);
+      return;
+    }
 
     try {
       const groupData = await apiFetch(`/groups/${inviteData.groupId}/join`, { method: 'POST' });
@@ -196,10 +224,13 @@ export default function MainScreen() {
 
       else if (isZenSession && groupData.allZen) {
         console.log("Joined a shared Zen session");
+      } else if (!currentDestination && !isZenSession) {
+        toggleZenSession();
       }
 
     } catch (error) {
       console.error("Failed to join ride:", error);
+      setShowRideInvite(false);
     }
   };
 
@@ -212,7 +243,10 @@ export default function MainScreen() {
     if (isDNDActive || !userId || !userName) {
       return;
     }
-    await sendInvite(friendId, userName, activeCoords.latitude, activeCoords.longitude);
+    const result = await sendInvite(friendId, userName, activeCoords.latitude, activeCoords.longitude);
+    if (result.success && result.groupId) {
+      setActiveGroupId(result.groupId);
+    }
   };
 
   const requestLocationPermission = async () => {
@@ -245,6 +279,36 @@ export default function MainScreen() {
       );
     });
   }, []);
+
+  useEffect(() => {
+    if (isDNDActive || isNavigating || isZenSession || activeGroupId) return;
+    if (activeCoords.latitude === 0 || !friends || friends.length === 0) return;
+
+    friends.forEach(friend => {
+      if (globalNotifiedFriends.has(friend.id)) return;
+
+      const R = 6371;
+      const dLat = (friend.latitude - activeCoords.latitude) * Math.PI / 180;
+      const dLon = (friend.longitude - activeCoords.longitude) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(activeCoords.latitude * Math.PI / 180) * Math.cos(friend.latitude * Math.PI / 180) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      const distanceCode = R * c;
+
+      if (distanceCode < 2.0 && !showRideInvite) {
+        setInviteData({
+          isLocalInvite: true,
+          friendId: friend.id,
+          friendName: friend.name,
+          distance: distanceCode < 1 ? `${Math.round(distanceCode * 1000)} m` : `${distanceCode.toFixed(1)} km`,
+          eta: `${Math.round(distanceCode * 2)} min`
+        });
+        setShowRideInvite(true);
+        globalNotifiedFriends.add(friend.id);
+      }
+    });
+  }, [friends, activeCoords, isDNDActive, isNavigating, isZenSession, activeGroupId, showRideInvite]);
 
   useEffect(() => {
     return () => {
@@ -292,9 +356,18 @@ export default function MainScreen() {
   };
 
   const handleOpenSearch = () => {
+    if (speed > 10) {
+      setIsSafetyLockVisible(true);
+      return;
+    }
+    openSearchForce();
+  };
+
+  const openSearchForce = () => {
     if (isZenSession) {
       cancelNavigation();
     }
+    setIsSafetyLockVisible(false);
     setSearchSessionId(prev => prev + 1);
     setIsSearching(true);
   };
@@ -678,6 +751,31 @@ export default function MainScreen() {
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.actionBtnCancel} onPress={() => setPendingSearch(null)}>
+              <Text style={styles.actionBtnTextCancel}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={isSafetyLockVisible} transparent animationType="slide">
+        <View style={styles.actionSheetOverlay}>
+          <View style={styles.actionSheetContent}>
+            <Text style={styles.actionSheetTitle}>Safety Lock</Text>
+            <Text style={styles.actionSheetSubtitle}>It is not safe to use the keyboard while you are driving.</Text>
+
+            <TouchableOpacity style={styles.actionBtnPrimary} onPress={() => {
+              setIsSafetyLockVisible(false);
+              Tts.speak('Where do you want to go?');
+            }}>
+              <Mic color="#FFF" size={24} />
+              <Text style={styles.actionBtnTextPrimary}>Voice Command</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.actionBtnSecondary} onPress={openSearchForce}>
+              <Text style={styles.actionBtnTextSecondary}>I am not driving</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.actionBtnCancel} onPress={() => setIsSafetyLockVisible(false)}>
               <Text style={styles.actionBtnTextCancel}>Cancel</Text>
             </TouchableOpacity>
           </View>

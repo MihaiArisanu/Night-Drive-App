@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { API_BASE_URL } from '@env';
+import { apiFetch } from './useCurrentUser';
 
 export function useRideInvite() {
     const [isInviting, setIsInviting] = useState(false);
@@ -7,11 +7,8 @@ export function useRideInvite() {
     const sendInvite = async (targetUserId: string, myName: string, myLat: number, myLng: number) => {
         setIsInviting(true);
         try {
-            const response = await fetch(`${API_BASE_URL}/api/groups/invite`, {
+            const data = await apiFetch(`/groups/invite`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
                 body: JSON.stringify({
                     targetUserId: targetUserId,
                     senderName: myName,
@@ -20,11 +17,7 @@ export function useRideInvite() {
                 }),
             });
 
-            if (!response.ok) {
-                throw new Error('Failed to send invite');
-            }
-
-            return { success: true };
+            return { success: true, groupId: data.groupId };
         } catch (error) {
             return { success: false, error };
         } finally {

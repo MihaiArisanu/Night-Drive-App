@@ -5,3 +5,10 @@ type GroupStopRequest struct {
 	Longitude float64 `json:"longitude"`
 	Name      string  `json:"name"`
 }
+
+type InviteRequest struct {
+	TargetUserId string  `json:"targetUserId"`
+	SenderName   string  `json:"senderName"`
+	SenderLat    float64 `json:"senderLat"`
+	SenderLng    float64 `json:"senderLng"`
+}

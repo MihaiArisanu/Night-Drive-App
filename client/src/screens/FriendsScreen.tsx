@@ -1,13 +1,12 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, FlatList, StyleSheet, TextInput, SafeAreaView, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, FlatList, StyleSheet, TextInput, ActivityIndicator, Alert, Platform } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowLeft, CheckCircle, AlertCircle, Info } from "lucide-react-native";
 import { useSettingsStore } from '../store/useSettingsStore';
-import { useFriendRequests } from '../hooks/useFriendRequests';
+import { useFriendRequests, useAllFriends } from '../hooks/useFriendRequests';
 import { useRideInvite } from '../hooks/useRideInvite';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import { useLocation } from '../hooks/useLocation';
-import { useNearbyFriends } from '../hooks/useNearbyFriends';
-
 
 export default function FriendsScreen({ navigation }: any) {
     const [activeTab, setActiveTab] = useState('Friends');
@@ -26,7 +25,7 @@ export default function FriendsScreen({ navigation }: any) {
     const { sendInvite } = useRideInvite();
 
     const { coords } = useLocation();
-    const { friends } = useNearbyFriends(coords.latitude, coords.longitude, isDNDActive, token);
+    const { friends, isLoading: friendsLoading } = useAllFriends();
 
     const allNotifications = [
         ...pendingRequests.map(req => ({
@@ -141,8 +140,8 @@ export default function FriendsScreen({ navigation }: any) {
                 renderItem={({ item }) => (
                     <View style={styles.card}>
                         <View>
-                            <Text style={styles.cardTitle}>{item.name}</Text>
-                            <Text style={styles.cardSubtitle}>Nearby</Text>
+                            <Text style={styles.cardTitle}>{item.username}</Text>
+                            <Text style={styles.cardSubtitle}>Friend</Text>
                         </View>
                         <View style={styles.buttonRow}>
                             <TouchableOpacity
@@ -254,7 +253,6 @@ export default function FriendsScreen({ navigation }: any) {
                 </TouchableOpacity>
             </View>
 
-            {/* TABS NAVIGATION */}
             <View style={styles.tabsContainer}>
                 {['Friends', 'Group', 'Notifications'].map((tab) => (
                     <TouchableOpacity
@@ -269,7 +267,6 @@ export default function FriendsScreen({ navigation }: any) {
                 ))}
             </View>
 
-            {/* CONTENT */}
             <View style={styles.mainContainer}>
                 {activeTab === 'Friends' && renderFriendsTab()}
                 {activeTab === 'Group' && renderGroupTab()}
@@ -283,7 +280,7 @@ const styles = StyleSheet.create({
     safeArea: {
         flex: 1,
         backgroundColor: '#09090B',
-        paddingTop: 40,
+        paddingTop: Platform.OS === 'ios' ? 5 : 30,
     },
     header: {
         paddingHorizontal: 15,

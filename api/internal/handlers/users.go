@@ -244,7 +244,13 @@ func GetNearbyFriendsHandler(database *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		nearbyUsers, err := db.GetNearbyActiveUsers(database, lat, lng)
+		userID, ok := r.Context().Value(UserIDKey).(string)
+		if !ok || userID == "" {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		nearbyUsers, err := db.GetNearbyActiveUsers(database, lat, lng, userID)
 		if err != nil {
 			http.Error(w, "Failed to fetch nearby friends", http.StatusInternalServerError)
 			return
