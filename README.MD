@@ -37,4 +37,4 @@ Ensure you have the following installed on your local machine:
 * `npm install`
 * `npx react-native start --reset-cache`
 
-* `npm run ios` # or `npm run android`
+* `npm run ios`  or `npm run android`
