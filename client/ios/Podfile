@@ -15,6 +15,11 @@ if linkage != nil
 end
 
 rn_maps_path = '../node_modules/react-native-maps'
+require_relative '../node_modules/react-native-permissions/scripts/setup.rb'
+
+setup_permissions([
+  'Microphone'
+])
 
 target 'NightDriveV2' do
   use_modular_headers!

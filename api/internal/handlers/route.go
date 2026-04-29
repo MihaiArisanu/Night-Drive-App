@@ -16,19 +16,19 @@ type ActiveRouteRequest struct {
 func SaveActiveRouteHandler(rdb *redis.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 			return
 		}
 
 		userID, ok := r.Context().Value(UserIDKey).(string)
 		if !ok || userID == "" {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
 			return
 		}
 
 		var req ActiveRouteRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid request body", nil)
 			return
 		}
 
@@ -37,7 +37,7 @@ func SaveActiveRouteHandler(rdb *redis.Client) http.HandlerFunc {
 
 		err := rdb.Set(ctx, key, req.Polyline, 4*time.Hour).Err()
 		if err != nil {
-			http.Error(w, "Failed to save active route", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to save active route", nil)
 			return
 		}
 

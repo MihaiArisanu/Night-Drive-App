@@ -14,25 +14,25 @@ import (
 func AddGroupStopHandler(db *sql.DB, hub *ws.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 			return
 		}
 
 		userID, ok := r.Context().Value(UserIDKey).(string)
 		if !ok || userID == "" {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
 			return
 		}
 
 		groupID := r.PathValue("id")
 		if groupID == "" {
-			http.Error(w, "Missing group ID", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Missing group ID", nil)
 			return
 		}
 
 		var req models.GroupStopRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid request body", nil)
 			return
 		}
 
@@ -43,7 +43,7 @@ func AddGroupStopHandler(db *sql.DB, hub *ws.Hub) http.HandlerFunc {
 
 		if err != nil {
 			log.Printf("Eroare la salvarea opririi: %v", err)
-			http.Error(w, "Failed to save stop", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to save stop", nil)
 			return
 		}
 
@@ -74,19 +74,19 @@ func AddGroupStopHandler(db *sql.DB, hub *ws.Hub) http.HandlerFunc {
 func InviteGroupHandler(hub *ws.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 			return
 		}
 
 		userID, ok := r.Context().Value(UserIDKey).(string)
 		if !ok || userID == "" {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
 			return
 		}
 
 		var req models.InviteRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid request body", nil)
 			return
 		}
 
@@ -121,7 +121,7 @@ func InviteGroupHandler(hub *ws.Hub) http.HandlerFunc {
 func JoinGroupHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 			return
 		}
 

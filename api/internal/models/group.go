@@ -12,3 +12,10 @@ type InviteRequest struct {
 	SenderLat    float64 `json:"senderLat"`
 	SenderLng    float64 `json:"senderLng"`
 }
+
+type UpdateGroupRequest struct {
+	Name         *string  `json:"name,omitempty"`
+	MemberIds    []string `json:"memberIds,omitempty"`
+	DriverId     *string  `json:"driverId,omitempty"`
+	VoiceChannel *bool    `json:"voiceChannel,omitempty"`
+}

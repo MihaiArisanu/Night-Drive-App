@@ -13,19 +13,19 @@ import (
 func SendFriendRequestHandler(database *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 			return
 		}
 
 		userID, ok := r.Context().Value(UserIDKey).(string)
 		if !ok || userID == "" {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
 			return
 		}
 
 		var payload models.FriendRequestPayload
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			http.Error(w, "Invalid payload", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid payload", nil)
 			return
 		}
 
@@ -48,7 +48,7 @@ func SendFriendRequestHandler(database *sql.DB) http.HandlerFunc {
 				return
 			}
 
-			http.Error(w, "Failed to send friend request", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to send friend request", nil)
 			return
 		}
 
@@ -61,19 +61,19 @@ func SendFriendRequestHandler(database *sql.DB) http.HandlerFunc {
 func GetFriendRequestsHandler(database *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 			return
 		}
 
 		userID, ok := r.Context().Value(UserIDKey).(string)
 		if !ok || userID == "" {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
 			return
 		}
 
 		reqs, err := db.GetPendingFriendRequests(database, userID)
 		if err != nil {
-			http.Error(w, "Failed to get friend requests", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to get friend requests", nil)
 			return
 		}
 
@@ -90,45 +90,45 @@ func GetFriendRequestsHandler(database *sql.DB) http.HandlerFunc {
 func RespondFriendRequestHandler(database *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 			return
 		}
 
 		userID, ok := r.Context().Value(UserIDKey).(string)
 		if !ok || userID == "" {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
 			return
 		}
 
 		pathParts := strings.Split(r.URL.Path, "/")
 		if len(pathParts) < 5 {
-			http.Error(w, "Invalid path", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid path", nil)
 			return
 		}
 		requestID := pathParts[4]
 
 		var actionReq models.FriendRequestAction
 		if err := json.NewDecoder(r.Body).Decode(&actionReq); err != nil {
-			http.Error(w, "Invalid payload", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid payload", nil)
 			return
 		}
 
 		if actionReq.Action != "accept" && actionReq.Action != "reject" {
-			http.Error(w, "Invalid action", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid action", nil)
 			return
 		}
 
 		err := db.RespondFriendRequest(database, requestID, userID, actionReq.Action)
 		if err != nil {
 			if strings.Contains(err.Error(), "not_found") {
-				http.Error(w, "Request not found", http.StatusNotFound)
+				RespondWithError(w, http.StatusNotFound, "api_error", "Request not found", nil)
 				return
 			}
 			if strings.Contains(err.Error(), "already_answered") {
-				http.Error(w, "Request already answered", http.StatusConflict)
+				RespondWithError(w, http.StatusConflict, "api_error", "Request already answered", nil)
 				return
 			}
-			http.Error(w, "Database error", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Database error", nil)
 			return
 		}
 
@@ -141,13 +141,13 @@ func RespondFriendRequestHandler(database *sql.DB) http.HandlerFunc {
 func GetAllFriendsHandler(database *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 			return
 		}
 
 		userID, ok := r.Context().Value(UserIDKey).(string)
 		if !ok || userID == "" {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
 			return
 		}
 

@@ -3,6 +3,8 @@ package handlers
 import (
 	"log"
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/MihaiArisanu/nightdrive-backend/internal/ws"
 	"github.com/golang-jwt/jwt/v5"
@@ -13,29 +15,53 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true
+		}
+
+		allowedOrigins := os.Getenv("ALLOWED_ORIGINS")
+		if allowedOrigins != "" {
+			for _, o := range strings.Split(allowedOrigins, ",") {
+				if strings.TrimSpace(o) == origin {
+					return true
+				}
+			}
+			return false
+		}
+
 		return true
 	},
 }
 
 func ServeWS(hub *ws.Hub, w http.ResponseWriter, r *http.Request) {
-	tokenString := r.URL.Query().Get("token")
-	if tokenString == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
 		return
 	}
+
+	parts := strings.Split(authHeader, " ")
+	if len(parts) != 2 || parts[0] != "Bearer" {
+		RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
+		return
+	}
+	tokenString := parts[1]
+
+	jwtKey := GetJWTKey()
 
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		return jwtKey, nil
 	})
 
 	if err != nil || !token.Valid {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
 		return
 	}
 
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
 		return
 	}
 

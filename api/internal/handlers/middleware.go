@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -21,29 +22,31 @@ func RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
-			http.Error(w, "Unauthorized - Missing Token", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized - Missing Token", nil)
 			return
 		}
 
 		parts := strings.Split(authHeader, " ")
 		if len(parts) != 2 || parts[0] != "Bearer" {
-			http.Error(w, "Unauthorized - Invalid Token Format", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized - Invalid Token Format", nil)
 			return
 		}
 		tokenString := parts[1]
+
+		jwtKey := GetJWTKey()
 
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 			return jwtKey, nil
 		})
 
 		if err != nil || !token.Valid {
-			http.Error(w, "Unauthorized - Invalid or Expired Token", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized - Invalid or Expired Token", nil)
 			return
 		}
 
 		claims, ok := token.Claims.(jwt.MapClaims)
 		if !ok {
-			http.Error(w, "Unauthorized - Invalid Token Claims", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized - Invalid Token Claims", nil)
 			return
 		}
 
@@ -85,7 +88,6 @@ func (lrw *loggingResponseWriter) WriteHeader(code int) {
 	lrw.ResponseWriter.WriteHeader(code)
 }
 
-// Hijack implements http.Hijacker so WebSocket upgrades work through this middleware.
 func (lrw *loggingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	h, ok := lrw.ResponseWriter.(http.Hijacker)
 	if !ok {
@@ -96,7 +98,24 @@ func (lrw *loggingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) 
 
 func CORSMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+		allowedOrigins := os.Getenv("ALLOWED_ORIGINS")
+
+		allowed := false
+		if allowedOrigins != "" {
+			for _, o := range strings.Split(allowedOrigins, ",") {
+				if strings.TrimSpace(o) == origin {
+					allowed = true
+					break
+				}
+			}
+		}
+
+		if allowed {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		} else if origin != "" && allowedOrigins == "" {
+		}
+
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, Authorization, X-CSRF-Token")
 
@@ -109,24 +128,31 @@ func CORSMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func RateLimit(rdb *redis.Client) func(http.HandlerFunc) http.HandlerFunc {
+func RateLimit(rdb *redis.Client, limit int, window time.Duration) func(http.HandlerFunc) http.HandlerFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			userID, ok := r.Context().Value(UserIDKey).(string)
-			if !ok {
-				userID = r.RemoteAddr
+			ip, _, err := net.SplitHostPort(r.RemoteAddr)
+			if err != nil {
+				ip = r.RemoteAddr
 			}
 
-			key := "rate_limit:" + userID
+			key := "rate_limit:" + r.URL.Path + ":" + ip
 			ctx := context.Background()
 
-			val, _ := rdb.Get(ctx, key).Result()
-			if val != "" {
-				http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+			count, err := rdb.Incr(ctx, key).Result()
+			if err != nil {
+				RespondWithError(w, http.StatusInternalServerError, "api_error", "Internal server error", err)
 				return
 			}
 
-			rdb.Set(ctx, key, "1", 3*time.Second)
+			if count == 1 {
+				rdb.Expire(ctx, key, window)
+			}
+
+			if count > int64(limit) {
+				RespondWithError(w, http.StatusTooManyRequests, "rate_limit_exceeded", "Too Many Requests", nil)
+				return
+			}
 
 			next.ServeHTTP(w, r)
 		}

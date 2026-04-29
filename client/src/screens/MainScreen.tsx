@@ -15,12 +15,12 @@ import { SpeedBox } from "../components/SpeedBox";
 import { TopBar } from "../components/TopBar";
 import { RideInviteSheet } from '../components/RideInviteSheet';
 import { SearchBar } from '../components/SearchBar';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 
 import { apiFetch } from '../services/api';
 import { API_BASE_URL, GOOGLE_API_GENERAL_KEY } from '@env';
 
 import { useLocation } from '../hooks/useLocation';
-import { useDeadReckoning } from '../hooks/useDeadReckoning';
 import { useRerouting } from '../hooks/useRerouting';
 import { useReporting } from '../hooks/useReporting';
 import { useNearbyEvents } from '../hooks/useNearbyEvents';
@@ -59,7 +59,7 @@ export default function MainScreen() {
   const speedMs = speed / 3.6;
   useKeepAwake();
 
-  const { activeCoords, isSimulating } = useDeadReckoning(coords, speedMs, heading);
+  const activeCoords = coords;
 
   const [destination, setDestination] = useState<{ latitude: number, longitude: number } | null>(null);
   const [stopDestination, setStopDestination] = useState<{ latitude: number, longitude: number } | null>(null);
@@ -320,7 +320,7 @@ export default function MainScreen() {
     if (activeCoords.latitude !== 0 && !isSearching && mapRef.current) {
       if (currentDestination && !isNavigating && !isZenSession) return;
 
-      const isDriving = speed > 5 || isSimulating;
+      const isDriving = speed > 5;
 
       mapRef.current.animateCamera({
         center: activeCoords,
@@ -329,7 +329,7 @@ export default function MainScreen() {
         zoom: isDriving || isNavigating || isZenSession ? 20.5 : 18.5,
       }, { duration: 1000 });
     }
-  }, [activeCoords, heading, speed, isSearching, currentDestination, isNavigating, isSimulating, isZenSession]);
+  }, [activeCoords, heading, speed, isSearching, currentDestination, isNavigating, isZenSession]);
 
   const closeSearch = () => {
     setIsSearching(false);
@@ -350,7 +350,7 @@ export default function MainScreen() {
 
     if (isZenSession) {
       setIsZenSession(false);
-      fetch(`${API_BASE_URL}/api/routes/zen/stop`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } }).catch(() => { });
+      fetch(`${API_BASE_URL}/routes/zen/stop`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } }).catch(() => { });
     }
     if (autoStartTimer.current) clearTimeout(autoStartTimer.current);
   };
@@ -471,7 +471,7 @@ export default function MainScreen() {
     if (newZenState) {
       setZenDestination(null);
       try {
-        const response = await fetch(`${API_BASE_URL}/api/routes/zen/start`, {
+        const response = await fetch(`${API_BASE_URL}/routes/zen/start`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -516,7 +516,7 @@ export default function MainScreen() {
     })();
 
     if (distM < 500) {
-      fetch(`${API_BASE_URL}/api/routes/zen/sync`, {
+      fetch(`${API_BASE_URL}/routes/zen/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ latitude: activeCoords.latitude, longitude: activeCoords.longitude, heading: heading ?? 0 })
@@ -544,144 +544,140 @@ export default function MainScreen() {
     <View style={styles.container}>
       <SafeAreaView style={styles.topSection} edges={["top"]}>
         <TopBar onZenPress={toggleZenSession} isZenActive={isZenSession} />
-
-        {isSimulating && (
-          <View style={styles.simulatingBadge}>
-            <Text style={styles.simulatingText}>GPS LOST - SIMULATING</Text>
-          </View>
-        )}
       </SafeAreaView>
 
       <View style={styles.mapContainer}>
-        <MapView
-          ref={mapRef}
-          provider={PROVIDER_GOOGLE}
-          style={styles.map}
-          customMapStyle={nightMapStyle}
-          initialRegion={region}
-          showsUserLocation={false}
-          showsMyLocationButton={false}
-          showsCompass={false}
-          loadingEnabled={true}
-          mapPadding={{ top: 0, right: 0, bottom: 120, left: 0 }}
-          onLongPress={handleMapLongPress}
-        >
-          {activeCoords.latitude !== 0 && (
-            <Marker
-              coordinate={activeCoords}
-              anchor={{ x: 0.5, y: 0.5 }}
-              flat={true}
-              rotation={heading}
-            >
-              <View style={[styles.customMarkerGlow, isSimulating && { shadowColor: "#EF4444" }]}>
-                <Navigation
-                  color={isSimulating ? "#EF4444" : (isZenSession ? "#10B981" : "#8A2BE2")}
-                  size={45}
-                  fill={isSimulating ? "#EF4444" : (isZenSession ? "#10B981" : "#8A2BE2")}
-                />
-              </View>
-            </Marker>
-          )}
+        <ErrorBoundary>
+          <MapView
+            ref={mapRef}
+            provider={PROVIDER_GOOGLE}
+            style={styles.map}
+            customMapStyle={nightMapStyle}
+            initialRegion={region}
+            showsUserLocation={false}
+            showsMyLocationButton={false}
+            showsCompass={false}
+            loadingEnabled={true}
+            mapPadding={{ top: 0, right: 0, bottom: 120, left: 0 }}
+            onLongPress={handleMapLongPress}
+          >
+            {activeCoords.latitude !== 0 && (
+              <Marker
+                coordinate={activeCoords}
+                anchor={{ x: 0.5, y: 0.5 }}
+                flat={true}
+                rotation={heading}
+              >
+                <View style={[styles.customMarkerGlow]}>
+                  <Navigation
+                    color={isZenSession ? "#10B981" : "#8A2BE2"}
+                    size={45}
+                    fill={isZenSession ? "#10B981" : "#8A2BE2"}
+                  />
+                </View>
+              </Marker>
+            )}
 
-          {friends.map((friend) => (
-            <Marker
-              key={friend.id}
-              coordinate={{ latitude: friend.latitude, longitude: friend.longitude }}
-              anchor={{ x: 0.5, y: 0.5 }}
-              flat={true}
-              rotation={friend.heading}
-              tracksViewChanges={false}
-              onPress={() => handleFriendClick(friend.id, friend.name)}
-            >
-              <View style={styles.friendMarkerContainer}>
-                <Navigation color="#10B981" size={30} fill="#10B981" />
-                <Text style={styles.friendMarkerText}>{friend.name}</Text>
-              </View>
-            </Marker>
-          ))}
+            {friends.map((friend) => (
+              <Marker
+                key={friend.id}
+                coordinate={{ latitude: friend.latitude, longitude: friend.longitude }}
+                anchor={{ x: 0.5, y: 0.5 }}
+                flat={true}
+                rotation={friend.heading}
+                tracksViewChanges={false}
+                onPress={() => handleFriendClick(friend.id, friend.name)}
+              >
+                <View style={styles.friendMarkerContainer}>
+                  <Navigation color="#10B981" size={30} fill="#10B981" />
+                  <Text style={styles.friendMarkerText}>{friend.name}</Text>
+                </View>
+              </Marker>
+            ))}
 
-          {events?.map((event) => (
-            <Marker
-              key={event.id}
-              coordinate={{ latitude: event.latitude, longitude: event.longitude }}
-              tracksViewChanges={false}
-            >
-              <View style={styles.eventMarkerContainer}>
-                <Text style={styles.eventMarkerEmoji}>
-                  {event.type === 'police' ? '🚔' : event.type === 'pothole' ? '⚠️' : '💥'}
-                </Text>
-              </View>
-            </Marker>
-          ))}
+            {events?.map((event) => (
+              <Marker
+                key={event.id}
+                coordinate={{ latitude: event.latitude, longitude: event.longitude }}
+                tracksViewChanges={false}
+              >
+                <View style={styles.eventMarkerContainer}>
+                  <Text style={styles.eventMarkerEmoji}>
+                    {event.type === 'police' ? '🚔' : event.type === 'pothole' ? '⚠️' : '💥'}
+                  </Text>
+                </View>
+              </Marker>
+            ))}
 
-          {dislikedAreas?.map((area) => (
-            <Circle
-              key={area.id}
-              center={{ latitude: area.latitude, longitude: area.longitude }}
-              radius={200}
-              strokeColor="rgba(239, 68, 68, 0.5)"
-              fillColor="rgba(239, 68, 68, 0.2)"
-            />
-          ))}
+            {dislikedAreas?.map((area) => (
+              <Circle
+                key={area.id}
+                center={{ latitude: area.latitude, longitude: area.longitude }}
+                radius={200}
+                strokeColor="rgba(239, 68, 68, 0.5)"
+                fillColor="rgba(239, 68, 68, 0.2)"
+              />
+            ))}
 
-          {rendezvousPoint && (
-            <Marker coordinate={rendezvousPoint} anchor={{ x: 0.5, y: 0.5 }}>
-              <View style={styles.rendezvousMarker}>
-                <Users color="#FFF" size={24} />
-              </View>
-            </Marker>
-          )}
+            {rendezvousPoint && (
+              <Marker coordinate={rendezvousPoint} anchor={{ x: 0.5, y: 0.5 }}>
+                <View style={styles.rendezvousMarker}>
+                  <Users color="#FFF" size={24} />
+                </View>
+              </Marker>
+            )}
 
-          {groupDestination && (
-            <Marker coordinate={groupDestination} anchor={{ x: 0.5, y: 1 }}>
-              <View style={styles.groupDestinationMarker}>
-                <MapPin color="#FFF" size={28} />
-              </View>
-            </Marker>
-          )}
+            {groupDestination && (
+              <Marker coordinate={groupDestination} anchor={{ x: 0.5, y: 1 }}>
+                <View style={styles.groupDestinationMarker}>
+                  <MapPin color="#FFF" size={28} />
+                </View>
+              </Marker>
+            )}
 
-          {currentDestination && routeOrigin && !isZenSession && (
-            <MapViewDirections
-              origin={routeOrigin}
-              destination={currentDestination}
-              waypoints={currentWaypoints.length > 0 ? currentWaypoints : undefined}
-              apikey={GOOGLE_API_KEY}
-              strokeWidth={8}
-              strokeColor="#8A2BE2"
-              mode="DRIVING"
-              precision="high"
-              optimizeWaypoints={true}
-              onReady={(result) => {
-                setRouteCoordinates(result.coordinates);
-                setRouteInfo({ distance: result.distance, duration: result.duration });
-                finishRerouting();
-              }}
-            />
-          )}
+            {currentDestination && routeOrigin && !isZenSession && (
+              <MapViewDirections
+                origin={routeOrigin}
+                destination={currentDestination}
+                waypoints={currentWaypoints.length > 0 ? currentWaypoints : undefined}
+                apikey={GOOGLE_API_KEY}
+                strokeWidth={8}
+                strokeColor="#8A2BE2"
+                mode="DRIVING"
+                precision="high"
+                optimizeWaypoints={true}
+                onReady={(result) => {
+                  setRouteCoordinates(result.coordinates);
+                  setRouteInfo({ distance: result.distance, duration: result.duration });
+                  finishRerouting();
+                }}
+              />
+            )}
 
-          {stopDestination && (
-            <Marker coordinate={stopDestination} anchor={{ x: 0.5, y: 1 }}>
-              <View style={styles.stopDestinationMarker}>
-                <MapPin color="#FFF" size={20} />
-              </View>
-            </Marker>
-          )}
+            {stopDestination && (
+              <Marker coordinate={stopDestination} anchor={{ x: 0.5, y: 1 }}>
+                <View style={styles.stopDestinationMarker}>
+                  <MapPin color="#FFF" size={20} />
+                </View>
+              </Marker>
+            )}
 
-          {isZenSession && zenDestination && (
-            <MapViewDirections
-              origin={activeCoords}
-              destination={zenDestination}
-              apikey={GOOGLE_API_KEY}
-              strokeWidth={8}
-              strokeColor="#10B981"
-              mode="DRIVING"
-              precision="high"
-              onReady={(result) => {
-                setRouteInfo({ distance: result.distance, duration: result.duration });
-              }}
-            />
-          )}
-        </MapView>
+            {isZenSession && zenDestination && (
+              <MapViewDirections
+                origin={activeCoords}
+                destination={zenDestination}
+                apikey={GOOGLE_API_KEY}
+                strokeWidth={8}
+                strokeColor="#10B981"
+                mode="DRIVING"
+                precision="high"
+                onReady={(result) => {
+                  setRouteInfo({ distance: result.distance, duration: result.duration });
+                }}
+              />
+            )}
+          </MapView>
+        </ErrorBoundary>
       </View>
 
       <Modal visible={isSearching} animationType="fade" transparent={true}>

@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/MihaiArisanu/nightdrive-backend/internal/db"
 	"github.com/MihaiArisanu/nightdrive-backend/internal/handlers"
@@ -40,55 +41,67 @@ func main() {
 		fmt.Fprintf(w, `{"error": "Route not found", "path": "%s"}`, r.URL.Path)
 	})
 
-	mux.HandleFunc("/api/users", handlers.CreateUserHandler(database))
-	mux.HandleFunc("/api/login", handlers.LoginHandler(database, hub))
-	mux.HandleFunc("/api/auth/refresh", handlers.RefreshTokenHandler(database))
-	mux.HandleFunc("/api/events/nearby", handlers.GetNearbyEventsHandler(database))
-	mux.HandleFunc("/api/users/search", handlers.RequireAuth(handlers.SearchUserHandler(database)))
-	mux.HandleFunc("/api/users/me", handlers.RequireAuth(handlers.GetUserMeHandler(database)))
-	mux.HandleFunc("/api/users/location", handlers.RequireAuth(handlers.UpdateUserLocationHandler(database)))
+	authRateLimit := handlers.RateLimit(rdb, 5, time.Minute)
 
-	mux.HandleFunc("/api/events", handlers.RequireAuth(handlers.CreateEventHandler(database, hub)))
+	mux.HandleFunc("/api/v1/users", authRateLimit(handlers.CreateUserHandler(database)))
+	mux.HandleFunc("/api/v1/login", authRateLimit(handlers.LoginHandler(database, hub, rdb)))
+	mux.HandleFunc("/api/v1/auth/refresh", authRateLimit(handlers.RefreshTokenHandler(database, rdb)))
+	mux.HandleFunc("/api/v1/auth/logout", authRateLimit(handlers.RequireAuth(handlers.LogoutHandler(rdb))))
+	mux.HandleFunc("/api/v1/auth/forgot-password", authRateLimit(handlers.ForgotPasswordHandler(database)))
+	mux.HandleFunc("/api/v1/events/nearby", handlers.GetNearbyEventsHandler(database))
+	mux.HandleFunc("/api/v1/users/search", handlers.RequireAuth(handlers.SearchUserHandler(database)))
+	mux.HandleFunc("/api/v1/users/me", handlers.RequireAuth(handlers.GetUserMeHandler(database)))
+	mux.HandleFunc("/api/v1/users/feedback", handlers.RequireAuth(handlers.SubmitFeedbackHandler(database)))
+	mux.HandleFunc("/api/v1/users/location", handlers.RequireAuth(handlers.UpdateUserLocationHandler(database)))
 
-	mux.HandleFunc("/api/events/vote", handlers.RequireAuth(handlers.VoteEventHandler(database)))
-	mux.HandleFunc("/api/friends", handlers.RequireAuth(handlers.GetAllFriendsHandler(database)))
-	mux.HandleFunc("/api/friends/nearby", handlers.RequireAuth(handlers.GetNearbyFriendsHandler(database)))
-	mux.HandleFunc("/api/friends/request", handlers.RequireAuth(handlers.SendFriendRequestHandler(database)))
-	mux.HandleFunc("/api/friends/requests", handlers.RequireAuth(handlers.GetFriendRequestsHandler(database)))
-	mux.HandleFunc("/api/friends/requests/{id}/respond", handlers.RequireAuth(handlers.RespondFriendRequestHandler(database)))
+	mux.HandleFunc("/api/v1/events", handlers.RequireAuth(handlers.CreateEventHandler(database, hub)))
 
-	mux.HandleFunc("/api/voice/upload", handlers.RequireAuth(handlers.UploadVoiceHandler(hub)))
-	mux.HandleFunc("/api/users/places", handlers.RequireAuth(handlers.PlacesHandler(database)))
-	mux.HandleFunc("/api/users/places/{id}", handlers.RequireAuth(handlers.PlaceByIDHandler(database)))
-	mux.HandleFunc("/api/users/dislikes", handlers.RequireAuth(handlers.DislikesHandler(database)))
-	mux.HandleFunc("/api/users/dislikes/{id}", handlers.RequireAuth(handlers.DislikeByIDHandler(database)))
+	mux.HandleFunc("/api/v1/events/vote", handlers.RequireAuth(handlers.VoteEventHandler(database)))
+	mux.HandleFunc("/api/v1/friends", handlers.RequireAuth(handlers.GetAllFriendsHandler(database)))
+	mux.HandleFunc("/api/v1/friends/nearby", handlers.RequireAuth(handlers.GetNearbyFriendsHandler(database)))
+	mux.HandleFunc("/api/v1/friends/request", handlers.RequireAuth(handlers.SendFriendRequestHandler(database)))
+	mux.HandleFunc("/api/v1/friends/requests", handlers.RequireAuth(handlers.GetFriendRequestsHandler(database)))
+	mux.HandleFunc("/api/v1/friends/requests/{id}/respond", handlers.RequireAuth(handlers.RespondFriendRequestHandler(database)))
 
-	mux.HandleFunc("/api/locations/history", handlers.RequireAuth(handlers.LocationHistoryHandler(database)))
+	mux.HandleFunc("/api/v1/voice/upload", handlers.RequireAuth(handlers.UploadVoiceHandler(hub)))
+	mux.HandleFunc("/api/v1/users/places", handlers.RequireAuth(handlers.PlacesHandler(database)))
+	mux.HandleFunc("/api/v1/users/places/{id}", handlers.RequireAuth(handlers.PlaceByIDHandler(database)))
+	mux.HandleFunc("/api/v1/users/dislikes", handlers.RequireAuth(handlers.DislikesHandler(database)))
+	mux.HandleFunc("/api/v1/users/dislikes/{id}", handlers.RequireAuth(handlers.DislikeByIDHandler(database)))
 
-	mux.HandleFunc("/api/routes/zen/start", handlers.RequireAuth(handlers.StartZenModeHandler(rdb)))
-	mux.HandleFunc("/api/routes/zen/stop", handlers.RequireAuth(handlers.StopZenModeHandler(rdb)))
-	mux.HandleFunc("/api/routes/zen/sync", handlers.RequireAuth(handlers.SyncZenLocationHandler(rdb)))
+	mux.HandleFunc("/api/v1/locations/history", handlers.RequireAuth(handlers.LocationHistoryHandler(database)))
 
-	mux.HandleFunc("/api/users/fcm", handlers.RequireAuth(handlers.UpdateFCMTokenHandler(database)))
+	mux.HandleFunc("/api/v1/routes/zen/start", handlers.RequireAuth(handlers.StartZenModeHandler(rdb)))
+	mux.HandleFunc("/api/v1/routes/zen/stop", handlers.RequireAuth(handlers.StopZenModeHandler(rdb)))
+	mux.HandleFunc("/api/v1/routes/zen/sync", handlers.RequireAuth(handlers.SyncZenLocationHandler(rdb)))
 
-	mux.HandleFunc("/api/groups/{id}/stop", handlers.RequireAuth(handlers.AddGroupStopHandler(database, hub)))
-	mux.HandleFunc("/api/groups/invite", handlers.RequireAuth(handlers.InviteGroupHandler(hub)))
-	mux.HandleFunc("/api/groups/{id}/join", handlers.RequireAuth(handlers.JoinGroupHandler()))
+	mux.HandleFunc("/api/v1/users/fcm", handlers.RequireAuth(handlers.UpdateFCMTokenHandler(database)))
 
-	mux.HandleFunc("/api/ws", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/groups/{id}/stop", handlers.RequireAuth(handlers.AddGroupStopHandler(database, hub)))
+	mux.HandleFunc("/api/v1/groups/invite", handlers.RequireAuth(handlers.InviteGroupHandler(hub)))
+	mux.HandleFunc("/api/v1/groups/{id}/join", handlers.RequireAuth(handlers.JoinGroupHandler()))
+
+	mux.HandleFunc("/api/v1/ws", func(w http.ResponseWriter, r *http.Request) {
 		handlers.ServeWS(hub, w, r)
 	})
 
-	mux.HandleFunc("/api/users/avatar", handlers.RequireAuth(handlers.UploadAvatarHandler(database)))
+	mux.HandleFunc("/api/v1/users/avatar", handlers.RequireAuth(handlers.UploadAvatarHandler(database)))
 
-	port := ":8080"
-	log.Printf("Starting backend server on http://192.168.100.177%s\n", port)
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	host := os.Getenv("HOST")
+	addr := fmt.Sprintf("%s:%s", host, port)
+
+	log.Printf("Starting backend server on %s\n", addr)
 
 	handlerWithCORS := handlers.CORSMiddleware(mux)
 
 	handlerWithLogging := handlers.LoggingMiddleware(handlerWithCORS)
 
-	err = http.ListenAndServe(port, handlerWithLogging)
+	err = http.ListenAndServe(addr, handlerWithLogging)
 	if err != nil {
 		log.Fatalf("Server error: %v", err)
 	}

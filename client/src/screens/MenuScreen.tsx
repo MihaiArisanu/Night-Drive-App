@@ -8,6 +8,7 @@ import { useDeleteAccount } from "../hooks/useDeleteAccount";
 import { useFriendRequests, FriendRequestResult } from "../hooks/useFriendRequests";
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useCurrentUser } from '../hooks/useCurrentUser';
+import { apiFetch } from '../services/api';
 
 export default function MenuScreen({ navigation }: any) {
   const { currentUser } = useCurrentUser();
@@ -31,6 +32,33 @@ export default function MenuScreen({ navigation }: any) {
   const [isAddFriendVisible, setIsAddFriendVisible] = useState(false);
   const [searchTag, setSearchTag] = useState("");
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+
+  const [isAppFeedbackVisible, setIsAppFeedbackVisible] = useState(false);
+  const [appFeedbackText, setAppFeedbackText] = useState("");
+  const [isSendingAppFeedback, setIsSendingAppFeedback] = useState(false);
+  const [appFeedbackStatus, setAppFeedbackStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const handleSendAppFeedback = async () => {
+    if (!appFeedbackText.trim()) return;
+    setAppFeedbackStatus(null);
+    setIsSendingAppFeedback(true);
+    try {
+      await apiFetch('/users/feedback', {
+        method: 'POST',
+        body: JSON.stringify({ message: appFeedbackText.trim() })
+      });
+      setAppFeedbackStatus({ type: 'success', text: 'Feedback sent successfully! Thank you.' });
+      setTimeout(() => {
+        setIsAppFeedbackVisible(false);
+        setAppFeedbackText('');
+        setAppFeedbackStatus(null);
+      }, 2000);
+    } catch (error: any) {
+      setAppFeedbackStatus({ type: 'error', text: error.message || 'Failed to send feedback.' });
+    } finally {
+      setIsSendingAppFeedback(false);
+    }
+  };
 
   const handleSend = async () => {
     setFeedback(null);
@@ -159,6 +187,20 @@ export default function MenuScreen({ navigation }: any) {
             <View style={styles.menuItemLeft}>
               <MapPinOff color="#A855F7" size={24} />
               <Text style={styles.menuItemText}>DISLIKED STREETS</Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => {
+              setIsAppFeedbackVisible(true);
+              setAppFeedbackStatus(null);
+              setAppFeedbackText("");
+            }}
+          >
+            <View style={styles.menuItemLeft}>
+              <MessageSquare color="#A855F7" size={24} />
+              <Text style={styles.menuItemText}>SEND FEEDBACK</Text>
             </View>
           </TouchableOpacity>
         </View>
@@ -297,6 +339,56 @@ export default function MenuScreen({ navigation }: any) {
               onPress={handleSend}
               style={{ marginTop: 16, width: "100%" }}
               disabled={isSearching || searchTag.length < 2}
+            />
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal
+        visible={isAppFeedbackVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setIsAppFeedbackVisible(false)}
+      >
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>SEND FEEDBACK</Text>
+              <TouchableOpacity onPress={() => setIsAppFeedbackVisible(false)}>
+                <X color="#444" size={24} />
+              </TouchableOpacity>
+            </View>
+
+            <TextInput
+              style={{ height: 100, width: '100%', textAlignVertical: 'top', padding: 15, backgroundColor: '#0A0A0A', borderWidth: 1, borderColor: '#333', borderRadius: 12 }}
+              placeholder="Tell us what you think or report a bug"
+              placeholderTextColor="#666"
+              value={appFeedbackText}
+              onChangeText={(t) => { setAppFeedbackText(t); setAppFeedbackStatus(null); }}
+              multiline
+            />
+
+            {appFeedbackStatus && (
+              <View style={[
+                styles.feedbackRow,
+                appFeedbackStatus.type === 'success' && styles.feedbackSuccess,
+                appFeedbackStatus.type === 'error' && styles.feedbackError,
+              ]}>
+                {appFeedbackStatus.type === 'success' && <CheckCircle color="#10B981" size={16} />}
+                {appFeedbackStatus.type === 'error' && <AlertCircle color="#EF4444" size={16} />}
+                <Text style={[
+                  styles.feedbackText,
+                  appFeedbackStatus.type === 'success' && { color: '#10B981' },
+                  appFeedbackStatus.type === 'error' && { color: '#EF4444' },
+                ]}>{appFeedbackStatus.text}</Text>
+              </View>
+            )}
+
+            <ActionButton
+              title={isSendingAppFeedback ? "SENDING..." : "SEND"}
+              onPress={handleSendAppFeedback}
+              style={{ marginTop: 16, width: "100%" }}
+              disabled={isSendingAppFeedback || appFeedbackText.trim().length < 5}
             />
           </View>
         </KeyboardAvoidingView>

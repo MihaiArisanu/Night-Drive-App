@@ -52,7 +52,7 @@ export default function SavedPlacesScreen({ navigation }: any) {
     const handleSaveCurrentLocation = async () => {
         if (coords.latitude && coords.longitude) {
             setIsAdding(true);
-            await savePlace("Locație Curentă", coords.latitude, coords.longitude);
+            await savePlace("Location Saved", coords.latitude, coords.longitude);
             setIsAdding(false);
 
             Toast.show({

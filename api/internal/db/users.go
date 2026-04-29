@@ -160,3 +160,12 @@ func UpdateUserLocation(dbConn *sql.DB, userID string, lat, lng, heading, speed 
 	_, err := dbConn.Exec(query, lng, lat, heading, isDnd, userID)
 	return err
 }
+
+func UpdateUserPassword(dbConn *sql.DB, userID string, newPasswordHash string) error {
+	query := `UPDATE users SET password_hash = $1 WHERE id = $2`
+	_, err := dbConn.Exec(query, newPasswordHash, userID)
+	if err != nil {
+		return fmt.Errorf("failed to update user password: %v", err)
+	}
+	return nil
+}

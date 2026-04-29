@@ -1,16 +1,28 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Keychain from 'react-native-keychain';
 import { API_BASE_URL } from '@env';
 
 export const AuthStorage = {
     saveTokens: async (accessToken: string, refreshToken: string) => {
-        await AsyncStorage.setItem('jwt_token', accessToken);
-        await AsyncStorage.setItem('refresh_token', refreshToken);
+        await Keychain.setGenericPassword('tokens', JSON.stringify({ accessToken, refreshToken }));
     },
-    getAccessToken: async () => await AsyncStorage.getItem('jwt_token'),
-    getRefreshToken: async () => await AsyncStorage.getItem('refresh_token'),
+    getAccessToken: async () => {
+        const credentials = await Keychain.getGenericPassword();
+        if (credentials) {
+            const tokens = JSON.parse(credentials.password);
+            return tokens.accessToken;
+        }
+        return null;
+    },
+    getRefreshToken: async () => {
+        const credentials = await Keychain.getGenericPassword();
+        if (credentials) {
+            const tokens = JSON.parse(credentials.password);
+            return tokens.refreshToken;
+        }
+        return null;
+    },
     clearTokens: async () => {
-        await AsyncStorage.removeItem('jwt_token');
-        await AsyncStorage.removeItem('refresh_token');
+        await Keychain.resetGenericPassword();
     },
 };
 
@@ -38,14 +50,13 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
     };
 
     const cleanEndpoint = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
-    const url = `${API_BASE_URL}/api${cleanEndpoint}`;
-
+    const url = `${API_BASE_URL}${cleanEndpoint}`;
     console.log(`[API] Request: ${url}`);
 
     let response = await fetch(url, { ...options, headers });
 
     if (response.status === 401) {
-        console.log(`[API] 401 Unauthorized la ${cleanEndpoint}. Încercăm Refresh...`);
+        console.log(`[API] 401 Unauthorized at ${cleanEndpoint}. Trying Refresh...`);
 
         const refreshToken = await AuthStorage.getRefreshToken();
 
@@ -67,7 +78,7 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
         } else {
             isRefreshing = true;
             try {
-                const refreshUrl = `${API_BASE_URL}/api/auth/refresh`;
+                const refreshUrl = `${API_BASE_URL}/auth/refresh`;
                 const refreshResponse = await fetch(refreshUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },

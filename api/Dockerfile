@@ -12,6 +12,7 @@ RUN addgroup -S nightdrive && adduser -S nightdriver -G nightdrive
 WORKDIR /app
 
 COPY --from=builder /app/main .
+COPY --from=builder /app/sql ./sql
 
 RUN mkdir -p /app/uploads/voice && \
     chown -R nightdriver:nightdrive /app && \

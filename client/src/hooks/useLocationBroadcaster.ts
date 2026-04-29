@@ -29,7 +29,7 @@ export function useLocationBroadcaster(
             isDnd: isDNDActive,
         };
 
-        fetch(`${API_BASE_URL}/api/users/location`, {
+        fetch(`${API_BASE_URL}/users/location`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

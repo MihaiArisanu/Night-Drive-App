@@ -34,7 +34,7 @@ export function useTelemetry(latitude: number, longitude: number, speedMs: numbe
     const sendBatch = async (dataBatch: TelemetryPoint[]) => {
         if (!token) return;
         try {
-            await fetch(`${API_BASE_URL}/api/locations/history`, {
+            await fetch(`${API_BASE_URL}/locations/history`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

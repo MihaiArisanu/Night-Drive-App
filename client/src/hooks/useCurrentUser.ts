@@ -11,7 +11,7 @@ export interface CurrentUser {
 export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
     const token = useSettingsStore.getState().token;
 
-    const response = await fetch(`${API_BASE_URL}/api${endpoint}`, {
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
         ...options,
         headers: {
             'Content-Type': 'application/json',
@@ -21,13 +21,13 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
     });
 
     const text = await response.text();
-    
+
     if (!response.ok) {
         let errorMessage = text;
         try {
             const parsed = JSON.parse(text);
             if (parsed.message) errorMessage = parsed.message;
-        } catch (e) {}
+        } catch (e) { }
         throw new Error(`API Error ${response.status}: ${errorMessage}`);
     }
 

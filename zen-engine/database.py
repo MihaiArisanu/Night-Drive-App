@@ -2,6 +2,8 @@ import os
 import asyncpg
 from typing import List
 
+from models import HistoryRecord, ExclusionZone
+
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 RADIUS_METERS = 10000  
@@ -11,7 +13,7 @@ async def get_db_pool():
         raise ValueError("EROARE: DATABASE_URL nu este setată de Docker Compose!")
     return await asyncpg.create_pool(DATABASE_URL)
 
-async def fetch_history(pool, user_id: str, lat: float, lng: float) -> List[dict]:
+async def fetch_history(pool, user_id: str, lat: float, lng: float) -> List[HistoryRecord]:
     query = """
         SELECT ST_Y(location::geometry) AS latitude, ST_X(location::geometry) AS longitude 
         FROM location_history 
@@ -24,22 +26,16 @@ async def fetch_history(pool, user_id: str, lat: float, lng: float) -> List[dict
               $4
           );
     """
-    try:
-        async with pool.acquire() as conn:
-            return await conn.fetch(query, user_id, lng, lat, RADIUS_METERS)
-    except Exception as e:
-        print(f"[Avertisment DB] Eroare la fetch_history: {e}")
-        return [] 
+    async with pool.acquire() as conn:
+        records = await conn.fetch(query, user_id, lng, lat, RADIUS_METERS)
+        return [HistoryRecord(**dict(r)) for r in records]
 
-async def fetch_exclusion_zones(pool, user_id: str) -> List[dict]:
+async def fetch_exclusion_zones(pool, user_id: str) -> List[ExclusionZone]:
     query = """
         SELECT ST_Y(location::geometry) AS latitude, ST_X(location::geometry) AS longitude FROM disliked_areas WHERE user_id = $1
         UNION ALL
         SELECT ST_Y(location::geometry) AS latitude, ST_X(location::geometry) AS longitude FROM events WHERE event_type IN ('pothole', 'accident', 'police')
     """
-    try:
-        async with pool.acquire() as conn:
-            return await conn.fetch(query, user_id)
-    except Exception as e:
-        print(f"[Avertisment DB] Eroare la fetch_exclusion_zones: {e}")
-        return []
+    async with pool.acquire() as conn:
+        records = await conn.fetch(query, user_id)
+        return [ExclusionZone(**dict(r)) for r in records]

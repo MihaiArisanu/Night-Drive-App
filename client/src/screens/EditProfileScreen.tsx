@@ -138,9 +138,9 @@ export default function EditProfileScreen({ navigation }: any) {
                             <View style={styles.cameraBadge}>
                                 <Camera color="white" size={16} />
                             </View>
-                        </TouchableOpacity>
+                        </TouchableOpacity>xw
                         <Text style={styles.tagText}>TAG: #{currentUser.tag}</Text>
-                        <Text style={styles.tagSubtitle}>(Tag-ul este unic și nu poate fi modificat)</Text>
+                        <Text style={styles.tagSubtitle}>(The tag cannot be changed!)</Text>
                     </View>
 
                     <View style={styles.formSection}>

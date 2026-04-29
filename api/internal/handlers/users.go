@@ -1,37 +1,49 @@
 package handlers
 
 import (
+	"context"
+
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
+	"github.com/go-playground/validator/v10"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/MihaiArisanu/nightdrive-backend/internal/db"
 	"github.com/MihaiArisanu/nightdrive-backend/internal/models"
+	"github.com/MihaiArisanu/nightdrive-backend/internal/utils"
 	"github.com/MihaiArisanu/nightdrive-backend/internal/ws"
 )
 
 func CreateUserHandler(database *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 			return
 		}
 
 		var req models.UserCreateRequest
 		err := json.NewDecoder(r.Body).Decode(&req)
 		if err != nil {
-			http.Error(w, "Invalid request payload", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid request payload", err)
+			return
+		}
+
+		if err := validate.Struct(req); err != nil {
+			RespondWithError(w, http.StatusBadRequest, "validation_failed", "Input validation failed: "+err.Error(), nil)
 			return
 		}
 
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 		if err != nil {
-			http.Error(w, "Failed to secure password", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to secure password", nil)
 			return
 		}
 
@@ -44,7 +56,7 @@ func CreateUserHandler(database *sql.DB) http.HandlerFunc {
 
 		err = db.CreateUser(database, &newUser)
 		if err != nil {
-			http.Error(w, "Failed to create user in database", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to create user in database", nil)
 			return
 		}
 
@@ -54,43 +66,53 @@ func CreateUserHandler(database *sql.DB) http.HandlerFunc {
 	}
 }
 
-var jwtKey = []byte("super_secret_jwt_key_for_nightdrive")
+func GetJWTKey() []byte {
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		log.Fatal("JWT_SECRET environment variable is required")
+	}
+	return []byte(secret)
+}
 
-func LoginHandler(database *sql.DB, hub *ws.Hub) http.HandlerFunc {
+func LoginHandler(database *sql.DB, hub *ws.Hub, rdb *redis.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 			return
 		}
 
 		var creds models.LoginRequest
 		if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
-			http.Error(w, "Invalid request", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid request", err)
+			return
+		}
+
+		if err := validate.Struct(creds); err != nil {
+			RespondWithError(w, http.StatusBadRequest, "validation_failed", "Input validation failed: "+err.Error(), nil)
 			return
 		}
 
 		user, err := db.GetUserByEmail(database, creds.Email)
 		if err != nil {
-			http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "bad_request", "Invalid credentials", nil)
 			return
 		}
 
 		err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(creds.Password))
 		if err != nil {
-			http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "bad_request", "Invalid credentials", nil)
 			return
 		}
 
-		// Trimitem mesajul de deconectare vechii sesiuni
 		kickMsg := map[string]string{
 			"type":    "session_invalidated",
 			"message": "Te-ai logat de pe alt dispozitiv.",
 		}
 		kickBytes, _ := json.Marshal(kickMsg)
 
-		// Asta va căuta în memoria serverului dacă userul e conectat pe alt telefon
-		// și îi va trimite eventul pe WebSocket.
 		hub.SendToUser(user.ID, kickBytes)
+
+		jwtKey := GetJWTKey()
 
 		token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 			"user_id": user.ID,
@@ -98,7 +120,7 @@ func LoginHandler(database *sql.DB, hub *ws.Hub) http.HandlerFunc {
 		})
 		tokenString, err := token.SignedString(jwtKey)
 		if err != nil {
-			http.Error(w, "Could not generate token", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Could not generate token", nil)
 			return
 		}
 
@@ -109,7 +131,13 @@ func LoginHandler(database *sql.DB, hub *ws.Hub) http.HandlerFunc {
 		})
 		refreshTokenString, err := refreshToken.SignedString(jwtKey)
 		if err != nil {
-			http.Error(w, "Could not generate refresh token", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Could not generate refresh token", err)
+			return
+		}
+
+		ctx := context.Background()
+		if err := rdb.Set(ctx, "refresh_token:"+user.ID, refreshTokenString, 30*24*time.Hour).Err(); err != nil {
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Could not save refresh token", err)
 			return
 		}
 
@@ -122,10 +150,10 @@ func LoginHandler(database *sql.DB, hub *ws.Hub) http.HandlerFunc {
 	}
 }
 
-func RefreshTokenHandler(database *sql.DB) http.HandlerFunc {
+func RefreshTokenHandler(database *sql.DB, rdb *redis.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 			return
 		}
 
@@ -133,9 +161,11 @@ func RefreshTokenHandler(database *sql.DB) http.HandlerFunc {
 			RefreshToken string `json:"refresh_token"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Invalid request payload", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid request payload", nil)
 			return
 		}
+
+		jwtKey := GetJWTKey()
 
 		claims := jwt.MapClaims{}
 		token, err := jwt.ParseWithClaims(req.RefreshToken, claims, func(token *jwt.Token) (interface{}, error) {
@@ -143,25 +173,31 @@ func RefreshTokenHandler(database *sql.DB) http.HandlerFunc {
 		})
 
 		if err != nil || !token.Valid {
-			http.Error(w, "Invalid or expired refresh token", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "bad_request", "Invalid or expired refresh token", nil)
 			return
 		}
 
 		if claims["type"] != "refresh" {
-			http.Error(w, "Invalid token type", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "bad_request", "Invalid token type", nil)
 			return
 		}
 
 		userID, ok := claims["user_id"].(string)
 		if !ok {
-			http.Error(w, "Invalid token claims", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "bad_request", "Invalid token claims", nil)
 			return
 		}
 
-		// Optionally verify if user still exists
+		ctx := context.Background()
+		storedToken, err := rdb.Get(ctx, "refresh_token:"+userID).Result()
+		if err != nil || storedToken != req.RefreshToken {
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Invalid or expired refresh token", nil)
+			return
+		}
+
 		user, err := db.GetUserByID(database, userID)
 		if err != nil {
-			http.Error(w, "User not found", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "api_error", "User not found", nil)
 			return
 		}
 
@@ -171,7 +207,7 @@ func RefreshTokenHandler(database *sql.DB) http.HandlerFunc {
 		})
 		newAccessTokenString, err := newAccessToken.SignedString(jwtKey)
 		if err != nil {
-			http.Error(w, "Could not generate new access token", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Could not generate new access token", nil)
 			return
 		}
 
@@ -182,7 +218,12 @@ func RefreshTokenHandler(database *sql.DB) http.HandlerFunc {
 		})
 		newRefreshTokenString, err := newRefreshToken.SignedString(jwtKey)
 		if err != nil {
-			http.Error(w, "Could not generate new refresh token", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Could not generate new refresh token", err)
+			return
+		}
+
+		if err := rdb.Set(ctx, "refresh_token:"+userID, newRefreshTokenString, 30*24*time.Hour).Err(); err != nil {
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Could not save new refresh token", err)
 			return
 		}
 
@@ -197,19 +238,19 @@ func RefreshTokenHandler(database *sql.DB) http.HandlerFunc {
 func SearchUserHandler(database *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 			return
 		}
 
 		tag := r.URL.Query().Get("tag")
 		if tag == "" || len(tag) < 4 {
-			http.Error(w, "Invalid or missing tag", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid or missing tag", nil)
 			return
 		}
 
 		user, err := db.SearchUserByTag(database, tag)
 		if err != nil {
-			http.Error(w, "Server error during search", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Server error during search", nil)
 			return
 		}
 
@@ -229,7 +270,7 @@ func SearchUserHandler(database *sql.DB) http.HandlerFunc {
 func GetNearbyFriendsHandler(database *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 			return
 		}
 
@@ -240,19 +281,19 @@ func GetNearbyFriendsHandler(database *sql.DB) http.HandlerFunc {
 		lng, errLng := strconv.ParseFloat(lngStr, 64)
 
 		if errLat != nil || errLng != nil {
-			http.Error(w, "Invalid or missing lat/lng parameters", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid or missing lat/lng parameters", nil)
 			return
 		}
 
 		userID, ok := r.Context().Value(UserIDKey).(string)
 		if !ok || userID == "" {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
 			return
 		}
 
 		nearbyUsers, err := db.GetNearbyActiveUsers(database, lat, lng, userID)
 		if err != nil {
-			http.Error(w, "Failed to fetch nearby friends", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to fetch nearby friends", nil)
 			return
 		}
 
@@ -265,19 +306,19 @@ func GetNearbyFriendsHandler(database *sql.DB) http.HandlerFunc {
 func GetUserMeHandler(database *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 			return
 		}
 
 		userID, ok := r.Context().Value(UserIDKey).(string)
 		if !ok || userID == "" {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
 			return
 		}
 
 		user, err := db.GetUserByID(database, userID)
 		if err != nil {
-			http.Error(w, "User not found", http.StatusNotFound)
+			RespondWithError(w, http.StatusNotFound, "api_error", "User not found", nil)
 			return
 		}
 
@@ -295,13 +336,13 @@ func GetUserMeHandler(database *sql.DB) http.HandlerFunc {
 func UpdateUserLocationHandler(database *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 			return
 		}
 
 		userID, ok := r.Context().Value(UserIDKey).(string)
 		if !ok || userID == "" {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
 			return
 		}
 
@@ -313,15 +354,140 @@ func UpdateUserLocationHandler(database *sql.DB) http.HandlerFunc {
 			IsDnd     bool    `json:"isDnd"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid request body", nil)
 			return
 		}
 
 		if err := db.UpdateUserLocation(database, userID, payload.Latitude, payload.Longitude, payload.Heading, payload.Speed, payload.IsDnd); err != nil {
-			http.Error(w, "Failed to update location", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to update location", nil)
 			return
 		}
 
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+var validate = validator.New()
+
+func LogoutHandler(rdb *redis.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
+			return
+		}
+
+		userID, ok := r.Context().Value(UserIDKey).(string)
+		if !ok || userID == "" {
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
+			return
+		}
+
+		ctx := context.Background()
+		rdb.Del(ctx, "refresh_token:"+userID)
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func ForgotPasswordHandler(database *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
+			return
+		}
+
+		var req struct {
+			Email string `json:"email"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid request payload", err)
+			return
+		}
+
+		user, err := db.GetUserByEmail(database, req.Email)
+		if err != nil {
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]string{"message": "If the email exists, a new password has been sent."})
+			return
+		}
+
+		newPassword, err := utils.GenerateRandomPassword(10)
+		if err != nil {
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to generate password", err)
+			return
+		}
+
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+		if err != nil {
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to secure password", err)
+			return
+		}
+
+		if err := db.UpdateUserPassword(database, user.ID, string(hashedPassword)); err != nil {
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to update password", err)
+			return
+		}
+
+		emailBody := "Hello " + user.Username + ",\n\nYour new temporary password is: " + newPassword + "\n\nPlease login and change it as soon as possible."
+		if err := utils.SendEmail(user.Email, "NightDrive Password Reset", emailBody); err != nil {
+			log.Printf("Failed to send email to %s: %v", user.Email, err)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to send email", err)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"message": "If the email exists, a new password has been sent."})
+	}
+}
+
+func SubmitFeedbackHandler(database *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
+			return
+		}
+
+		userID, ok := r.Context().Value(UserIDKey).(string)
+		if !ok || userID == "" {
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
+			return
+		}
+
+		var req struct {
+			Message string `json:"message"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid request payload", err)
+			return
+		}
+
+		if req.Message == "" {
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Feedback message cannot be empty", nil)
+			return
+		}
+
+		user, err := db.GetUserByID(database, userID)
+		if err != nil {
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to retrieve user data", err)
+			return
+		}
+
+		adminEmail := os.Getenv("SMTP_USER")
+		if adminEmail == "" {
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Admin email not configured", nil)
+			return
+		}
+
+		subject := "NightDrive Feedback from " + user.Username + " (#" + user.Tag + ")"
+		body := "User: " + user.Username + " (#" + user.Tag + ")\nEmail: " + user.Email + "\n\nFeedback:\n" + req.Message
+
+		if err := utils.SendEmail(adminEmail, subject, body); err != nil {
+			log.Printf("Failed to send feedback email: %v", err)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to send feedback", err)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"message": "Feedback sent successfully."})
 	}
 }

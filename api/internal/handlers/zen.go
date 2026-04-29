@@ -96,7 +96,7 @@ func StartZenModeHandler(rdb *redis.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, ok := r.Context().Value(UserIDKey).(string)
 		if !ok {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
 			return
 		}
 
@@ -105,16 +105,15 @@ func StartZenModeHandler(rdb *redis.Client) http.HandlerFunc {
 
 		engineResp, err := fetchZenWaypoints(userID, req.Latitude, req.Longitude, req.Heading)
 		if err != nil {
-			http.Error(w, "Zen Engine unreachable", http.StatusServiceUnavailable)
+			RespondWithError(w, http.StatusServiceUnavailable, "api_error", "Zen Engine unreachable", nil)
 			return
 		}
 
 		if len(engineResp.Waypoints) < 1 {
-			http.Error(w, "No waypoints generated", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "No waypoints generated", nil)
 			return
 		}
 
-		// Store all waypoints in Redis, start at index 0
 		session := ZenSession{
 			Waypoints:      engineResp.Waypoints,
 			CurrentWpIndex: 0,
@@ -123,7 +122,6 @@ func StartZenModeHandler(rdb *redis.Client) http.HandlerFunc {
 		sessionBytes, _ := json.Marshal(session)
 		rdb.Set(context.Background(), "zen_session:"+userID, sessionBytes, 4*time.Hour)
 
-		// Return ONLY the first waypoint — client navigates one step at a time
 		firstWp := engineResp.Waypoints[0]
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -149,7 +147,7 @@ func SyncZenLocationHandler(rdb *redis.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, ok := r.Context().Value(UserIDKey).(string)
 		if !ok {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
 			return
 		}
 
@@ -173,11 +171,9 @@ func SyncZenLocationHandler(rdb *redis.Client) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 
 		if dist < 500.0 {
-			// Advance to next waypoint
 			nextIdx := session.CurrentWpIndex + 1
 
 			if nextIdx >= len(session.Waypoints) {
-				// Ran out of waypoints — generate a new set from current position
 				lastWp := session.Waypoints[len(session.Waypoints)-1]
 				engineResp, err := fetchZenWaypoints(userID, lastWp.Lat, lastWp.Lng, req.Heading)
 				if err != nil || len(engineResp.Waypoints) < 1 {

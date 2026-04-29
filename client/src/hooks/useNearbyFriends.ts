@@ -19,7 +19,7 @@ export function useNearbyFriends(userLat: number | null, userLng: number | null,
         }
 
         try {
-            const response = await fetch(`${API_BASE_URL}/api/friends/nearby?lat=${userLat}&lng=${userLng}`, {
+            const response = await fetch(`${API_BASE_URL}/friends/nearby?lat=${userLat}&lng=${userLng}`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (!response.ok) throw new Error('Failed to fetch friends');

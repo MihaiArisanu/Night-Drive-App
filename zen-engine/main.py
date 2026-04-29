@@ -45,6 +45,16 @@ async def startup():
 async def shutdown():
     await app.state.pool.close()
 
+@app.get("/health")
+async def health_check():
+    pool = app.state.pool
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute("SELECT 1")
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database unavailable: {e}")
+
 @app.post(
     "/generate-loop", 
     response_model=ZenResponse, 
@@ -60,14 +70,14 @@ async def generate_path(payload: ZenRequest):
     
     if len(history) < 50:
         is_cold_start = True
-        waypoints_tuples = geo_utils.generate_forward_path(payload.current_lat, payload.current_lng, heading=payload.heading)
+        waypoints_tuples = await geo_utils.generate_forward_path_async(payload.current_lat, payload.current_lng, heading=payload.heading)
     else:
         cluster_centroids = ml_engine.get_zen_clusters(history)
         valid_waypoints = geo_utils.filter_waypoints(cluster_centroids, bad_areas)
         
         if len(valid_waypoints) < 4:
             is_cold_start = True
-            waypoints_tuples = geo_utils.generate_forward_path(payload.current_lat, payload.current_lng, heading=payload.heading)
+            waypoints_tuples = await geo_utils.generate_forward_path_async(payload.current_lat, payload.current_lng, heading=payload.heading)
         else:
             waypoints_tuples = valid_waypoints[:4]
             

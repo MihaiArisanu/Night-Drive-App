@@ -55,7 +55,6 @@ export const useFriendRequests = () => {
                 body: JSON.stringify({ receiverTag: tag })
             });
 
-            // If we don't crash, we've successfully sent the request.
             return { status: 'success' };
         } catch (err: any) {
             const msg: string = err?.message ?? '';

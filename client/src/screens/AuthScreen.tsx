@@ -95,6 +95,26 @@ export default function AuthScreen({ route, navigation }: any) {
         }
     };
 
+    const handleForgotPassword = async () => {
+        if (!email) {
+            Alert.alert('Forgot Password', 'Please enter your email address first.');
+            return;
+        }
+
+        setIsLoading(true);
+        try {
+            await apiFetch('/auth/forgot-password', {
+                method: 'POST',
+                body: JSON.stringify({ email: email.trim() }),
+            });
+            Alert.alert('Success', 'If that email exists, a temporary password has been sent. Please check your inbox.');
+        } catch (error: any) {
+            Alert.alert('Error', error.message || 'Failed to request password reset.');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     return (
         <SafeAreaView style={styles.container}>
             <KeyboardAvoidingView
@@ -138,7 +158,7 @@ export default function AuthScreen({ route, navigation }: any) {
                     />
                     <TextInput
                         style={styles.input}
-                        placeholder="Password"
+                        placeholder="Password (minimum 8 characters)"
                         placeholderTextColor="#888"
                         value={password}
                         onChangeText={setPassword}
@@ -158,6 +178,12 @@ export default function AuthScreen({ route, navigation }: any) {
                             </Text>
                         )}
                     </TouchableOpacity>
+
+                    {isLogin && (
+                        <TouchableOpacity style={styles.forgotPasswordButton} onPress={handleForgotPassword} disabled={isLoading}>
+                            <Text style={styles.forgotPasswordText}>Forgot password?</Text>
+                        </TouchableOpacity>
+                    )}
                 </View>
 
                 <TouchableOpacity onPress={() => setIsLogin(!isLogin)} style={styles.switchButton}>
@@ -238,4 +264,13 @@ const styles = StyleSheet.create({
         color: '#8A2BE2',
         fontSize: 16
     },
+    forgotPasswordButton: {
+        marginTop: 15,
+        alignItems: 'center'
+    },
+    forgotPasswordText: {
+        color: '#9CA3AF',
+        fontSize: 14,
+        textDecorationLine: 'underline'
+    }
 });

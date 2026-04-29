@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { API_BASE_URL } from '@env';
 import { useSettingsStore } from '../store/useSettingsStore';
-import { decodePolyline } from '../utils/polyline';
+import { decodePolyline } from '../utilis/polyline';
 
 export function useZenSessionSync(
     isZenSession: boolean,
@@ -16,7 +16,7 @@ export function useZenSessionSync(
 
         const interval = setInterval(async () => {
             try {
-                const response = await fetch(`${API_BASE_URL}/api/routes/zen/sync`, {
+                const response = await fetch(`${API_BASE_URL}/routes/zen/sync`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',

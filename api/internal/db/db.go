@@ -2,10 +2,14 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -28,5 +32,22 @@ func Connect() (*sql.DB, error) {
 	}
 
 	log.Println("Successfully connected to the PostgreSQL database!")
+
+	migrationsPath := os.Getenv("MIGRATIONS_PATH")
+	if migrationsPath == "" {
+		migrationsPath = "file://sql/migrations"
+	}
+
+	m, err := migrate.New(migrationsPath, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize migrations: %v", err)
+	}
+
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		return nil, fmt.Errorf("failed to run migrations: %v", err)
+	}
+
+	log.Println("Database migrations applied successfully!")
+
 	return db, nil
 }

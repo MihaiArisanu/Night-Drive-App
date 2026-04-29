@@ -1,9 +1,14 @@
 import numpy as np
 from sklearn.cluster import DBSCAN
-from typing import List
+from typing import List, Tuple
 
-def get_zen_clusters(history_records: List[dict]) -> List[tuple]:
-    coords = np.array([[r['latitude'], r['longitude']] for r in history_records])
+from models import HistoryRecord
+
+def get_zen_clusters(history_records: List[HistoryRecord]) -> List[Tuple[float, float]]:
+    if not history_records:
+        return []
+
+    coords = np.array([[r.latitude, r.longitude] for r in history_records])
     coords_rad = np.radians(coords)
     
     kms_per_radian = 6371.0088
@@ -20,6 +25,6 @@ def get_zen_clusters(history_records: List[dict]) -> List[tuple]:
         class_member_mask = (labels == label)
         cluster_coords = coords[class_member_mask]
         centroid = cluster_coords.mean(axis=0)
-        cluster_centroids.append((centroid[0], centroid[1]))
+        cluster_centroids.append((float(centroid[0]), float(centroid[1])))
         
     return cluster_centroids

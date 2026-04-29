@@ -15,27 +15,27 @@ import (
 func CreateEventHandler(database *sql.DB, hub *ws.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 			return
 		}
 
 		var req models.EventCreateRequest
 		err := json.NewDecoder(r.Body).Decode(&req)
 		if err != nil {
-			http.Error(w, "Invalid request payload", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid request payload", nil)
 			return
 		}
 
 		userID, ok := r.Context().Value(UserIDKey).(string)
 		if !ok {
-			http.Error(w, "Server error: User ID not found in context", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Server error: User ID not found in context", nil)
 			return
 		}
 		req.UserID = userID
 
 		event, err := db.CreateEvent(database, &req)
 		if err != nil {
-			http.Error(w, "Failed to create event in database", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to create event in database", nil)
 			return
 		}
 
@@ -60,7 +60,7 @@ func CreateEventHandler(database *sql.DB, hub *ws.Hub) http.HandlerFunc {
 func GetNearbyEventsHandler(database *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 			return
 		}
 
@@ -71,13 +71,13 @@ func GetNearbyEventsHandler(database *sql.DB) http.HandlerFunc {
 
 		lat, err := strconv.ParseFloat(latStr, 64)
 		if err != nil {
-			http.Error(w, "Invalid 'lat' parameter", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid 'lat' parameter", nil)
 			return
 		}
 
 		lng, err := strconv.ParseFloat(lngStr, 64)
 		if err != nil {
-			http.Error(w, "Invalid 'lng' parameter", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid 'lng' parameter", nil)
 			return
 		}
 
@@ -103,7 +103,7 @@ func GetNearbyEventsHandler(database *sql.DB) http.HandlerFunc {
 
 		events, err := db.GetNearbyEvents(database, lat, lng, radius, limit, offset)
 		if err != nil {
-			http.Error(w, "Failed to fetch events", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to fetch events", nil)
 			return
 		}
 
@@ -115,28 +115,28 @@ func GetNearbyEventsHandler(database *sql.DB) http.HandlerFunc {
 func VoteEventHandler(database *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 			return
 		}
 
 		var req models.EventVoteRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Invalid request payload", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid request payload", nil)
 			return
 		}
 
 		if req.VoteType != "upvote" && req.VoteType != "downvote" {
-			http.Error(w, "Invalid vote type. Must be 'upvote' or 'downvote'", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid vote type. Must be 'upvote' or 'downvote'", nil)
 			return
 		}
 
 		err := db.VoteEvent(database, req.EventID, req.VoteType)
 		if err != nil {
 			if err.Error() == "event not found" {
-				http.Error(w, "Event not found", http.StatusNotFound)
+				RespondWithError(w, http.StatusNotFound, "api_error", "Event not found", nil)
 				return
 			}
-			http.Error(w, "Failed to register vote", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to register vote", nil)
 			return
 		}
 

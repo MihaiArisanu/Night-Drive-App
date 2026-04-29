@@ -43,7 +43,7 @@ export function useActiveRouteSync(routeCoordinates: { latitude: number; longitu
             try {
                 const polylineString = encodePolyline(routeCoordinates);
 
-                await fetch(`${API_BASE_URL}/api/routes/active`, {
+                await fetch(`${API_BASE_URL}/routes/active`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',

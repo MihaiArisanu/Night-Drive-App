@@ -13,19 +13,19 @@ import (
 func LocationHistoryHandler(database *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 			return
 		}
 
 		userID, ok := r.Context().Value(UserIDKey).(string)
 		if !ok || userID == "" {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
 			return
 		}
 
 		var points []models.LocationPoint
 		if err := json.NewDecoder(r.Body).Decode(&points); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid request body", nil)
 			return
 		}
 
@@ -35,7 +35,7 @@ func LocationHistoryHandler(database *sql.DB) http.HandlerFunc {
 		}
 
 		if err := db.SaveLocationHistory(database, userID, points); err != nil {
-			http.Error(w, "Failed to save location history", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to save location history", nil)
 			return
 		}
 
@@ -48,7 +48,7 @@ func DislikedAreasHandler(database *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, ok := r.Context().Value(UserIDKey).(string)
 		if !ok || userID == "" {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
 			return
 		}
 
@@ -58,7 +58,7 @@ func DislikedAreasHandler(database *sql.DB) http.HandlerFunc {
 		case http.MethodGet:
 			areas, err := db.GetDislikedAreas(database, userID)
 			if err != nil {
-				http.Error(w, "Failed to fetch disliked areas", http.StatusInternalServerError)
+				RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to fetch disliked areas", nil)
 				return
 			}
 			json.NewEncoder(w).Encode(map[string]interface{}{"areas": areas})
@@ -66,17 +66,17 @@ func DislikedAreasHandler(database *sql.DB) http.HandlerFunc {
 		case http.MethodPost:
 			var req models.DislikedAreaRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "Invalid request body", http.StatusBadRequest)
+				RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid request body", nil)
 				return
 			}
 
 			if req.Latitude == 0 || req.Longitude == 0 || req.Reason == "" {
-				http.Error(w, "Missing required fields", http.StatusBadRequest)
+				RespondWithError(w, http.StatusBadRequest, "bad_request", "Missing required fields", nil)
 				return
 			}
 
 			if err := db.SaveDislikedArea(database, userID, req); err != nil {
-				http.Error(w, "Failed to save disliked area", http.StatusInternalServerError)
+				RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to save disliked area", nil)
 				return
 			}
 
@@ -87,12 +87,12 @@ func DislikedAreasHandler(database *sql.DB) http.HandlerFunc {
 			parts := strings.Split(r.URL.Path, "/")
 			areaID := parts[len(parts)-1]
 			if areaID == "" {
-				http.Error(w, "Missing area ID", http.StatusBadRequest)
+				RespondWithError(w, http.StatusBadRequest, "bad_request", "Missing area ID", nil)
 				return
 			}
 
 			if err := db.DeleteDislikedArea(database, userID, areaID); err != nil {
-				http.Error(w, "Failed to delete disliked area", http.StatusInternalServerError)
+				RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to delete disliked area", nil)
 				return
 			}
 
@@ -100,7 +100,7 @@ func DislikedAreasHandler(database *sql.DB) http.HandlerFunc {
 			json.NewEncoder(w).Encode(map[string]string{"status": "success"})
 
 		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 		}
 	}
 }

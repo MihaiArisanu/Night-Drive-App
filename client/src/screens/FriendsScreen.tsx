@@ -90,7 +90,7 @@ export default function FriendsScreen({ navigation }: any) {
                 <View style={styles.actionHeader}>
                     <TextInput
                         style={styles.searchInput}
-                        placeholder="Add friend by Name#Tag..."
+                        placeholder="Add friend by #Tag"
                         placeholderTextColor="#71717A"
                         value={searchTag}
                         onChangeText={(t) => { setSearchTag(t); setFeedback(null); }}

@@ -12,7 +12,7 @@ func DislikesHandler(database *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, ok := r.Context().Value(UserIDKey).(string)
 		if !ok || userID == "" {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
 			return
 		}
 
@@ -25,7 +25,7 @@ func DislikesHandler(database *sql.DB) http.HandlerFunc {
                 FROM disliked_areas WHERE user_id = $1 ORDER BY created_at DESC`, userID)
 
 			if err != nil {
-				http.Error(w, "Failed to fetch disliked areas", http.StatusInternalServerError)
+				RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to fetch disliked areas", nil)
 				return
 			}
 			defer rows.Close()
@@ -49,12 +49,12 @@ func DislikesHandler(database *sql.DB) http.HandlerFunc {
 		case http.MethodPost:
 			var req models.DislikeRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "Invalid request body", http.StatusBadRequest)
+				RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid request body", nil)
 				return
 			}
 
 			if req.Latitude == 0 || req.Longitude == 0 {
-				http.Error(w, "Missing coordinates", http.StatusBadRequest)
+				RespondWithError(w, http.StatusBadRequest, "bad_request", "Missing coordinates", nil)
 				return
 			}
 
@@ -64,7 +64,7 @@ func DislikesHandler(database *sql.DB) http.HandlerFunc {
 				userID, req.Longitude, req.Latitude, req.Reason)
 
 			if err != nil {
-				http.Error(w, "Failed to save disliked area", http.StatusInternalServerError)
+				RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to save disliked area", nil)
 				return
 			}
 
@@ -72,7 +72,7 @@ func DislikesHandler(database *sql.DB) http.HandlerFunc {
 			json.NewEncoder(w).Encode(map[string]string{"status": "success"})
 
 		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 		}
 	}
 }
@@ -81,13 +81,13 @@ func DislikeByIDHandler(database *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, ok := r.Context().Value(UserIDKey).(string)
 		if !ok || userID == "" {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
 			return
 		}
 
 		dislikeID := r.PathValue("id")
 		if dislikeID == "" {
-			http.Error(w, "Missing dislike ID", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Missing dislike ID", nil)
 			return
 		}
 
@@ -95,7 +95,7 @@ func DislikeByIDHandler(database *sql.DB) http.HandlerFunc {
 		case http.MethodDelete:
 			_, err := database.Exec("DELETE FROM disliked_areas WHERE id = $1 AND user_id = $2", dislikeID, userID)
 			if err != nil {
-				http.Error(w, "Failed to delete disliked area", http.StatusInternalServerError)
+				RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to delete disliked area", nil)
 				return
 			}
 
@@ -105,13 +105,13 @@ func DislikeByIDHandler(database *sql.DB) http.HandlerFunc {
 		case http.MethodPatch:
 			var req models.DislikeRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "Invalid request body", http.StatusBadRequest)
+				RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid request body", nil)
 				return
 			}
 
 			_, err := database.Exec("UPDATE disliked_areas SET reason = $1 WHERE id = $2 AND user_id = $3", req.Reason, dislikeID, userID)
 			if err != nil {
-				http.Error(w, "Failed to update disliked area", http.StatusInternalServerError)
+				RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to update disliked area", nil)
 				return
 			}
 
@@ -119,7 +119,7 @@ func DislikeByIDHandler(database *sql.DB) http.HandlerFunc {
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(map[string]string{"status": "success"})
 		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 		}
 	}
 }

@@ -9,7 +9,7 @@ export function useReporting() {
         setIsSubmitting(true);
 
         try {
-            const response = await fetch(`${API_BASE_URL}/api/events`, {
+            const response = await fetch(`${API_BASE_URL}/events`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

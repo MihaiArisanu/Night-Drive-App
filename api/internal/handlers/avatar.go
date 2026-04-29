@@ -13,30 +13,30 @@ import (
 	"github.com/google/uuid"
 )
 
-const maxUploadSize = 5 * 1024 * 1024 // 5 MB
+const maxUploadSize = 5 * 1024 * 1024
 
 func UploadAvatarHandler(database *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 			return
 		}
 
 		userID, ok := r.Context().Value(UserIDKey).(string)
 		if !ok {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
 			return
 		}
 
 		r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
 		if err := r.ParseMultipartForm(maxUploadSize); err != nil {
-			http.Error(w, "Fișierul este prea mare (Max 5MB)", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "api_error", "Fișierul este prea mare (Max 5MB)", nil)
 			return
 		}
 
-		file, fileHeader, err := r.FormFile("avatar")
+		file, _, err := r.FormFile("avatar")
 		if err != nil {
-			http.Error(w, "Eroare la preluarea fișierului", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "api_error", "Eroare la preluarea fișierului", nil)
 			return
 		}
 		defer file.Close()
@@ -44,52 +44,59 @@ func UploadAvatarHandler(database *sql.DB) http.HandlerFunc {
 		buff := make([]byte, 512)
 		_, err = file.Read(buff)
 		if err != nil {
-			http.Error(w, "Eroare la citirea fișierului", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Eroare la citirea fișierului", nil)
 			return
 		}
 
 		filetype := http.DetectContentType(buff)
 		if filetype != "image/jpeg" && filetype != "image/png" && filetype != "image/webp" {
-			http.Error(w, "Sunt permise doar imagini (JPEG, PNG, WEBP)", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "api_error", "Sunt permise doar imagini (JPEG, PNG, WEBP)", nil)
 			return
 		}
 
 		_, err = file.Seek(0, io.SeekStart)
 		if err != nil {
-			http.Error(w, "Eroare internă", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Eroare internă", nil)
 			return
 		}
 
 		uploadDir := "./uploads/avatars"
 		err = os.MkdirAll(uploadDir, os.ModePerm)
 		if err != nil {
-			http.Error(w, "Eroare la crearea folderului", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Eroare la crearea folderului", nil)
 			return
 		}
 
-		ext := filepath.Ext(fileHeader.Filename)
-		if ext == "" {
-			ext = ".png" // Fallback
+		var ext string
+		switch filetype {
+		case "image/jpeg":
+			ext = ".jpg"
+		case "image/png":
+			ext = ".png"
+		case "image/webp":
+			ext = ".webp"
+		default:
+			ext = ".png"
 		}
 		newFileName := fmt.Sprintf("%s%s", uuid.New().String(), ext)
 		filePath := filepath.Join(uploadDir, newFileName)
 
 		dst, err := os.Create(filePath)
 		if err != nil {
-			http.Error(w, "Eroare la salvarea fișierului", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Eroare la salvarea fișierului", nil)
 			return
 		}
 		defer dst.Close()
 
 		if _, err := io.Copy(dst, file); err != nil {
-			http.Error(w, "Eroare la scrierea pe disc", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Eroare la scrierea pe disc", nil)
 			return
 		}
 
 		avatarURL := fmt.Sprintf("/uploads/avatars/%s", newFileName)
 
 		if err := db.UpdateAvatar(database, userID, avatarURL); err != nil {
-			http.Error(w, "Eroare la salvarea în baza de date", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Eroare la salvarea în baza de date", nil)
 			return
 		}
 

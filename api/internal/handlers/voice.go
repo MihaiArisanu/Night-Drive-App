@@ -7,24 +7,23 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
-	"time"
 
 	"github.com/MihaiArisanu/nightdrive-backend/internal/ws"
+	"github.com/google/uuid"
 )
 
 func UploadVoiceHandler(hub *ws.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 			return
 		}
 
-		r.Body = http.MaxBytesReader(w, r.Body, 5<<20)
+		r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
 
-		err := r.ParseMultipartForm(5 << 20)
+		err := r.ParseMultipartForm(2 << 20)
 		if err != nil {
-			http.Error(w, "File too large", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "api_error", "File too large", nil)
 			return
 		}
 
@@ -33,13 +32,13 @@ func UploadVoiceHandler(hub *ws.Hub) http.HandlerFunc {
 
 		senderId, ok := r.Context().Value(UserIDKey).(string)
 		if !ok || groupId == "" || senderName == "" {
-			http.Error(w, "Missing required fields", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Missing required fields", nil)
 			return
 		}
 
 		file, handler, err := r.FormFile("audio")
 		if err != nil {
-			http.Error(w, "Invalid audio file", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid audio file", nil)
 			return
 		}
 		defer file.Close()
@@ -47,38 +46,55 @@ func UploadVoiceHandler(hub *ws.Hub) http.HandlerFunc {
 		buff := make([]byte, 512)
 		_, err = file.Read(buff)
 		if err != nil {
-			http.Error(w, "Failed to read file", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to read file", nil)
 			return
 		}
 
 		filetype := http.DetectContentType(buff)
-		if !strings.HasPrefix(filetype, "audio/") && filetype != "application/octet-stream" && filetype != "video/mp4" {
-			http.Error(w, "Invalid file format", http.StatusUnsupportedMediaType)
+		validAudioTypes := map[string]bool{
+			"audio/mpeg": true,
+			"audio/ogg":  true,
+			"audio/mp4":  true,
+			"audio/webm": true,
+			"audio/aac":  true,
+			"audio/wave": true,
+			"audio/wav":  true,
+		}
+		if !validAudioTypes[filetype] {
+			RespondWithError(w, http.StatusUnsupportedMediaType, "bad_request", "Invalid file format", nil)
 			return
 		}
 
 		_, err = file.Seek(0, io.SeekStart)
 		if err != nil {
-			http.Error(w, "Failed to process file", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to process file", nil)
 			return
 		}
 
 		uploadDir := "./uploads/voice"
 		os.MkdirAll(uploadDir, os.ModePerm)
 
-		filename := fmt.Sprintf("%d_%s", time.Now().UnixNano(), handler.Filename)
+		ext := filepath.Ext(handler.Filename)
+		if ext == "" {
+			ext = ".m4a"
+		}
+		filename := fmt.Sprintf("%s%s", uuid.New().String(), ext)
 		filePath := filepath.Join(uploadDir, filename)
 
 		dst, err := os.Create(filePath)
 		if err != nil {
-			http.Error(w, "Failed to save audio file", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to save audio file", nil)
 			return
 		}
 		defer dst.Close()
 
 		io.Copy(dst, file)
 
-		audioUrl := fmt.Sprintf("http://192.168.100.225:8080/uploads/voice/%s", filename)
+		baseURL := os.Getenv("BASE_URL")
+		if baseURL == "" {
+			baseURL = fmt.Sprintf("http://%s", r.Host)
+		}
+		audioUrl := fmt.Sprintf("%s/uploads/voice/%s", baseURL, filename)
 
 		wsPayload := map[string]interface{}{
 			"type": "VOICE_MESSAGE",

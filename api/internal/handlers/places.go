@@ -13,7 +13,7 @@ func PlacesHandler(database *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, ok := r.Context().Value(UserIDKey).(string)
 		if !ok || userID == "" {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
 			return
 		}
 
@@ -23,7 +23,7 @@ func PlacesHandler(database *sql.DB) http.HandlerFunc {
 		case http.MethodGet:
 			places, err := db.GetSavedPlaces(database, userID)
 			if err != nil {
-				http.Error(w, "Failed to fetch places", http.StatusInternalServerError)
+				RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to fetch places", nil)
 				return
 			}
 
@@ -34,17 +34,17 @@ func PlacesHandler(database *sql.DB) http.HandlerFunc {
 		case http.MethodPost:
 			var req models.PlaceRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "Invalid request body", http.StatusBadRequest)
+				RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid request body", nil)
 				return
 			}
 
 			if req.Name == "" || req.Latitude == 0 || req.Longitude == 0 {
-				http.Error(w, "Missing required fields", http.StatusBadRequest)
+				RespondWithError(w, http.StatusBadRequest, "bad_request", "Missing required fields", nil)
 				return
 			}
 
 			if err := db.SavePlace(database, userID, req); err != nil {
-				http.Error(w, "Failed to save place", http.StatusInternalServerError)
+				RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to save place", nil)
 				return
 			}
 
@@ -52,7 +52,7 @@ func PlacesHandler(database *sql.DB) http.HandlerFunc {
 			json.NewEncoder(w).Encode(map[string]string{"status": "success"})
 
 		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 		}
 	}
 }
@@ -61,13 +61,13 @@ func PlaceByIDHandler(database *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, ok := r.Context().Value(UserIDKey).(string)
 		if !ok || userID == "" {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
 			return
 		}
 
 		placeID := r.PathValue("id")
 		if placeID == "" {
-			http.Error(w, "Missing place ID", http.StatusBadRequest)
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Missing place ID", nil)
 			return
 		}
 
@@ -79,24 +79,24 @@ func PlaceByIDHandler(database *sql.DB) http.HandlerFunc {
 				Name string `json:"name"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
-				http.Error(w, "Invalid request body", http.StatusBadRequest)
+				RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid request body", nil)
 				return
 			}
 			if err := db.UpdatePlace(database, userID, placeID, req.Name); err != nil {
-				http.Error(w, "Failed to update place", http.StatusInternalServerError)
+				RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to update place", nil)
 				return
 			}
 			json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
 
 		case http.MethodDelete:
 			if err := db.DeletePlace(database, userID, placeID); err != nil {
-				http.Error(w, "Failed to delete place", http.StatusInternalServerError)
+				RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to delete place", nil)
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)
 
 		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 		}
 	}
 }

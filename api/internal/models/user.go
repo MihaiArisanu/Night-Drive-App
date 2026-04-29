@@ -3,15 +3,15 @@ package models
 import "time"
 
 type UserCreateRequest struct {
-	Username string `json:"username"`
-	Tag      string `json:"tag"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Username string `json:"username" validate:"required,min=3,max=32"`
+	Tag      string `json:"tag" validate:"required,min=4,max=20"`
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required,min=8"`
 }
 
 type LoginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required"`
 }
 
 type User struct {
