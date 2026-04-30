@@ -14,6 +14,7 @@ export default function AuthScreen({ route, navigation }: any) {
     const [isLogin, setIsLogin] = useState(initialIsLogin);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
     const [username, setUsername] = useState('');
     const [tag, setTag] = useState('');
     const [isLoading, setIsLoading] = useState(false);
@@ -156,14 +157,24 @@ export default function AuthScreen({ route, navigation }: any) {
                         keyboardType={isLogin ? "default" : "email-address"}
                         autoCapitalize="none"
                     />
-                    <TextInput
-                        style={styles.input}
-                        placeholder="Password (minimum 8 characters)"
-                        placeholderTextColor="#888"
-                        value={password}
-                        onChangeText={setPassword}
-                        secureTextEntry
-                    />
+                    <View style={styles.passwordContainer}>
+                        <TextInput
+                            style={styles.passwordInput}
+                            placeholder="Password (minimum 8 characters)"
+                            placeholderTextColor="#888"
+                            value={password}
+                            onChangeText={setPassword}
+                            secureTextEntry={!showPassword}
+                        />
+                        <TouchableOpacity
+                            style={styles.eyeButton}
+                            onPress={() => setShowPassword(!showPassword)}
+                        >
+                            <Text style={styles.eyeText}>
+                                {showPassword ? 'HIDE' : 'SHOW'}
+                            </Text>
+                        </TouchableOpacity>
+                    </View>
 
                     <TouchableOpacity
                         style={[styles.button, isLoading && { opacity: 0.7 }]}
@@ -272,5 +283,31 @@ const styles = StyleSheet.create({
         color: '#9CA3AF',
         fontSize: 14,
         textDecorationLine: 'underline'
+    },
+    passwordContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#111',
+        borderRadius: 12,
+        marginBottom: 15,
+        borderWidth: 1,
+        borderColor: '#222',
+    },
+    passwordInput: {
+        flex: 1,
+        color: '#FFF',
+        padding: 18,
+        fontSize: 16,
+    },
+    eyeButton: {
+        padding: 15,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    eyeText: {
+        color: '#8A2BE2',
+        fontWeight: 'bold',
+        fontSize: 9,
+        letterSpacing: 1,
     }
 });

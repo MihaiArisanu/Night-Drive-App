@@ -34,7 +34,7 @@ export function useWebSocket(
     useEffect(() => {
         if (!token) return;
 
-        let wsUrl = API_BASE_URL.replace('http', 'ws').replace('https', 'wss') + `/api/ws?token=${token}`;
+        let wsUrl = API_BASE_URL.replace('http', 'ws').replace('https', 'wss') + `/ws?token=${token}`;
 
         if (groupId) {
             wsUrl += `&groupId=${groupId}`;

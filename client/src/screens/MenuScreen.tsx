@@ -15,18 +15,14 @@ export default function MenuScreen({ navigation }: any) {
   const { confirmAndDelete, isDeleting } = useDeleteAccount();
   const {
     activeGroupId, setActiveGroupId,
-    groupMembers, setGroupMembers,
-    pendingGroupInvites, setPendingGroupInvites
+    groupMembers, setGroupMembers
   } = useSettingsStore();
 
   const [isTermsVisible, setIsTermsVisible] = useState(false);
 
   const {
-    pendingRequests,
     isSearching,
-    sendFriendRequest,
-    respondToRequest,
-    clearAllRequests
+    sendFriendRequest
   } = useFriendRequests();
 
   const [isAddFriendVisible, setIsAddFriendVisible] = useState(false);
@@ -94,13 +90,6 @@ export default function MenuScreen({ navigation }: any) {
     setGroupMembers([]);
   };
 
-  const handleAcceptGroup = (inviteId: string, groupId: string) => {
-    setActiveGroupId(groupId);
-    setPendingGroupInvites(pendingGroupInvites.filter(inv => inv.id !== inviteId));
-  };
-
-  const hasMessages = pendingRequests.length > 0 || pendingGroupInvites.length > 0;
-
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -133,7 +122,7 @@ export default function MenuScreen({ navigation }: any) {
           )}
         </TouchableOpacity>
 
-        {activeGroupId && (
+        {!!activeGroupId && (
           <View style={styles.groupSection}>
             <View style={styles.groupHeader}>
               <View style={styles.messageTitleRow}>
@@ -205,68 +194,6 @@ export default function MenuScreen({ navigation }: any) {
           </TouchableOpacity>
         </View>
 
-        {hasMessages && (
-          <View style={styles.messageSection}>
-            <View style={styles.messageHeader}>
-              <View style={styles.messageTitleRow}>
-                <MessageSquare color="white" size={20} />
-                <Text style={styles.messageTitle}>
-                  MESSAGES ({pendingRequests.length + pendingGroupInvites.length})
-                </Text>
-              </View>
-              <TouchableOpacity onPress={clearAllRequests}>
-                <X color="#444" size={20} />
-              </TouchableOpacity>
-            </View>
-
-            {pendingGroupInvites.map((inv) => (
-              <View key={inv.id} style={[styles.notificationCard, { borderColor: '#10B981' }]}>
-                <Text style={styles.notificationText}>
-                  {inv.senderName} INVITED YOU TO A RIDE
-                </Text>
-                <View style={styles.notificationActions}>
-                  <ActionButton
-                    title="JOIN"
-                    style={[styles.notifBtn, { backgroundColor: '#10B981' }]}
-                    textStyle={{ fontSize: 12 }}
-                    onPress={() => handleAcceptGroup(inv.id, inv.groupId)}
-                  />
-                  <ActionButton
-                    title="REJECT"
-                    variant="outline"
-                    style={styles.notifBtn}
-                    textStyle={{ fontSize: 12 }}
-                    onPress={() => setPendingGroupInvites(pendingGroupInvites.filter(i => i.id !== inv.id))}
-                  />
-                </View>
-              </View>
-            ))}
-
-            {pendingRequests.map((req) => (
-              <View key={req.id} style={styles.notificationCard}>
-                <Text style={styles.notificationText}>
-                  {req.name} ADDED YOU AS FRIEND
-                </Text>
-                <View style={styles.notificationActions}>
-                  <ActionButton
-                    title="ACCEPT"
-                    style={styles.notifBtn}
-                    textStyle={{ fontSize: 12 }}
-                    onPress={() => respondToRequest(req.id, 'accept')}
-                  />
-                  <ActionButton
-                    title="REJECT"
-                    variant="outline"
-                    style={styles.notifBtn}
-                    textStyle={{ fontSize: 12 }}
-                    onPress={() => respondToRequest(req.id, 'reject')}
-                  />
-                </View>
-              </View>
-            ))}
-          </View>
-        )}
-
         <TouchableOpacity
           style={styles.termsContainer}
           onPress={() => setIsTermsVisible(true)}
@@ -274,17 +201,27 @@ export default function MenuScreen({ navigation }: any) {
           <Text style={styles.termsLinkText}>Terms & Conditions</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.deleteAccountButton}
-          onPress={confirmAndDelete}
-          disabled={isDeleting}
-        >
-          {isDeleting ? (
-            <ActivityIndicator color="#EF4444" size="small" />
-          ) : (
-            <Text style={styles.deleteAccountText}>DELETE ACCOUNT</Text>
-          )}
-        </TouchableOpacity>
+        <View style={styles.accountActionsContainer}>
+          <TouchableOpacity
+            style={styles.signOutButton}
+            onPress={() => navigation.navigate("Auth")}
+          >
+            <LogOut color="white" size={16} style={{ marginRight: 8 }} />
+            <Text style={styles.signOutText}>SIGN OUT</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={confirmAndDelete}
+            disabled={isDeleting}
+            style={styles.deleteSmallButton}
+          >
+            {isDeleting ? (
+              <ActivityIndicator color="#EF4444" size="small" />
+            ) : (
+              <Text style={styles.deleteSmallText}>delete account</Text>
+            )}
+          </TouchableOpacity>
+        </View>
       </ScrollView>
 
       <Modal
@@ -360,7 +297,7 @@ export default function MenuScreen({ navigation }: any) {
             </View>
 
             <TextInput
-              style={{ height: 100, width: '100%', textAlignVertical: 'top', padding: 15, backgroundColor: '#0A0A0A', borderWidth: 1, borderColor: '#333', borderRadius: 12 }}
+              style={{ height: 100, width: '100%', textAlignVertical: 'top', padding: 15, backgroundColor: '#0A0A0A', borderWidth: 1, borderColor: '#333', borderRadius: 12, color: 'white', fontSize: 16 }}
               placeholder="Tell us what you think or report a bug"
               placeholderTextColor="#666"
               value={appFeedbackText}
@@ -578,15 +515,6 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     letterSpacing: 1,
   },
-  messageSection: {
-    marginTop: 40,
-    paddingHorizontal: 20,
-  },
-  messageHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 15,
-  },
   messageTitleRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -596,31 +524,6 @@ const styles = StyleSheet.create({
     color: "white",
     fontSize: 16,
     fontWeight: "900",
-  },
-  notificationCard: {
-    backgroundColor: "#111",
-    padding: 20,
-    borderRadius: 15,
-    borderWidth: 1,
-    borderColor: "#A855F7",
-    marginBottom: 10,
-  },
-  notificationText: {
-    color: "white",
-    fontSize: 14,
-    fontWeight: "bold",
-    textAlign: "center",
-    marginBottom: 15,
-  },
-  notificationActions: {
-    flexDirection: "row",
-    justifyContent: "center",
-    gap: 15,
-  },
-  notifBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    minWidth: 100,
   },
   modalOverlay: {
     flex: 1,
@@ -697,22 +600,39 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     flex: 1,
   },
-  deleteAccountButton: {
+  accountActionsContainer: {
     marginTop: 40,
     marginBottom: 20,
     alignSelf: "center",
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderWidth: 1,
-    borderColor: "#EF4444",
-    borderRadius: 10,
-    backgroundColor: "rgba(239, 68, 68, 0.1)",
+    alignItems: "center",
+    gap: 10,
   },
-  deleteAccountText: {
-    color: "#EF4444",
+  signOutButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+    paddingHorizontal: 28,
+    borderWidth: 1,
+    borderColor: "#555",
+    borderRadius: 10,
+    backgroundColor: "#1A1A1A",
+  },
+  signOutText: {
+    color: "white",
     fontSize: 14,
     fontWeight: "bold",
     letterSpacing: 1,
+  },
+  deleteSmallButton: {
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+  },
+  deleteSmallText: {
+    color: "#EF4444",
+    fontSize: 11,
+    fontWeight: "600",
+    letterSpacing: 0.5,
+    textDecorationLine: "underline",
   },
   termsContainer: {
     marginTop: 30,
