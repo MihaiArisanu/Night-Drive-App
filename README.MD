@@ -29,12 +29,3 @@ Ensure you have the following installed on your local machine:
 * [Node.js](https://nodejs.org/) (v18+)
 * [Go](https://go.dev/) (1.20+)
 * React Native development environment (Xcode / Android Studio)
-
-### How to run:
-* `docker-compose up --build -d`
-
-* `cd client`
-* `npm install`
-* `npx react-native start --reset-cache`
-
-* `npm run ios`  or `npm run android`
