@@ -41,7 +41,7 @@ func main() {
 		fmt.Fprintf(w, `{"error": "Route not found", "path": "%s"}`, r.URL.Path)
 	})
 
-	authRateLimit := handlers.RateLimit(rdb, 5, time.Minute)
+	authRateLimit := handlers.RateLimit(rdb, 3, time.Minute)
 
 	mux.HandleFunc("/api/v1/users", authRateLimit(handlers.CreateUserHandler(database)))
 	mux.HandleFunc("/api/v1/login", authRateLimit(handlers.LoginHandler(database, hub, rdb)))

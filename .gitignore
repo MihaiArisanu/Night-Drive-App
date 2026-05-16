@@ -21,6 +21,7 @@ zen-engine/.venv/
 .ipynb_checkpoints/
 
 client/node_modules/
+client/vendor/
 client/.env
 client/npm-debug.log*
 client/*.jsbundle
