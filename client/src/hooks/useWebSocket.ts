@@ -29,105 +29,108 @@ export function useWebSocket(
     onVoiceReceived: (data: VoicePayload) => void
 ) {
     const ws = useRef<WebSocket | null>(null);
-    const { setGroupDestination, setRendezvousPoint } = useSettingsStore();
+    const reconnectTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const isIntentionalClose = useRef<boolean>(false);
+    const navigation = useNavigation<any>();
+
+    const callbacksRef = useRef({ onInviteReceived, onVoiceReceived });
+    useEffect(() => {
+        callbacksRef.current = { onInviteReceived, onVoiceReceived };
+    }, [onInviteReceived, onVoiceReceived]);
 
     useEffect(() => {
         if (!token) return;
 
-        let wsUrl = API_BASE_URL.replace('http', 'ws').replace('https', 'wss') + `/ws?token=${token}`;
+        isIntentionalClose.current = false;
 
-        if (groupId) {
-            wsUrl += `&groupId=${groupId}`;
-        }
+        const connect = () => {
+            let wsUrl = API_BASE_URL.replace('http', 'ws').replace('https', 'wss') + `/ws?token=${token}`;
 
-        ws.current = new WebSocket(wsUrl);
-
-        ws.current.onmessage = (event) => {
-            try {
-                const message = JSON.parse(event.data);
-
-                if (message.type === 'RIDE_INVITE' && message.payload) {
-                    onInviteReceived(message.payload);
-                }
-
-                if (message.type === 'ROUTE_SYNC' && message.payload) {
-                    const payload = message.payload as RouteSyncPayload;
-                    setGroupDestination(payload.finalDestination);
-                    if (payload.rendezvousPoint) {
-                        setRendezvousPoint(payload.rendezvousPoint);
-                    }
-                }
-
-                if (message.type === 'VOICE_MESSAGE' && message.payload) {
-                    onVoiceReceived(message.payload);
-                }
-            } catch (error) {
-                console.error('WebSocket JSON parsing error:', error);
+            if (groupId) {
+                wsUrl += `&groupId=${groupId}`;
             }
+
+            ws.current = new WebSocket(wsUrl);
+
+            ws.current.onopen = () => {
+                console.log("[WebSocket] Connected.");
+                if (reconnectTimeout.current) {
+                    clearTimeout(reconnectTimeout.current);
+                    reconnectTimeout.current = null;
+                }
+            };
+
+            ws.current.onmessage = (event) => {
+                try {
+                    const message = JSON.parse(event.data);
+
+                    const { activeGroupId, setGroupStop, clearSettings } = useSettingsStore.getState();
+
+                    if (message.type === 'RIDE_INVITE') {
+                        callbacksRef.current.onInviteReceived(message.payload);
+                    } else if (message.type === 'VOICE_MESSAGE') {
+                        callbacksRef.current.onVoiceReceived(message.payload);
+                    } else if (message.type === 'KICK_DUPLICATE') {
+                        Alert.alert(
+                            "Session Terminated",
+                            "Your account was logged in from another device. This session will be closed.",
+                            [{
+                                text: "OK", onPress: () => {
+                                    clearSettings();
+                                    navigation.replace('Welcome');
+                                }
+                            }]
+                        );
+                    } else if (message.type === 'group_stop_added') {
+                        if (message.group_id === activeGroupId) {
+                            console.log("New group stop:", message.payload);
+                            setGroupStop({
+                                latitude: message.payload.latitude,
+                                longitude: message.payload.longitude,
+                                name: message.payload.name
+                            });
+
+                            Toast.show({
+                                type: 'info',
+                                text1: 'Route Updated!',
+                                text2: `${message.payload.name} added as a group stop.`,
+                                position: 'top',
+                                visibilityTime: 4000,
+                            });
+                        }
+                    }
+                } catch (error) {
+                    console.error("[WebSocket] Eroare la parsarea mesajului:", error);
+                }
+            };
+
+            ws.current.onerror = (err) => {
+                console.log('[WebSocket] Connection error. Closing...');
+                ws.current?.close();
+            };
+
+            ws.current.onclose = (e) => {
+                console.log('[WebSocket] Connection closed.');
+
+                if (!isIntentionalClose.current) {
+                    reconnectTimeout.current = setTimeout(() => {
+                        console.log('[WebSocket] Reconnecting...');
+                        connect();
+                    }, 5000);
+                }
+            };
         };
 
+        connect();
+
         return () => {
+            isIntentionalClose.current = true;
+            if (reconnectTimeout.current) {
+                clearTimeout(reconnectTimeout.current);
+            }
             if (ws.current) {
                 ws.current.close();
             }
         };
-    }, [token, groupId, onInviteReceived, onVoiceReceived, setGroupDestination, setRendezvousPoint]);
-
-    return { ws: ws.current };
-}
-
-export function useGroupStopListener(socket: WebSocket | null) {
-    const { activeGroupId, setGroupStop, clearSettings } = useSettingsStore();
-    const navigation = useNavigation<any>();
-
-    useEffect(() => {
-        if (!socket) return;
-
-        const handleWebSocketMessage = (event: WebSocketMessageEvent) => {
-            try {
-                const data = JSON.parse(event.data);
-
-                if (data.type === 'session_invalidated') {
-                    Alert.alert(
-                        "Session Expired",
-                        "You have logged in from another device. This session will be closed.",
-                        [{
-                            text: "OK", onPress: () => {
-                                clearSettings();
-                                navigation.replace('Welcome');
-                            }
-                        }]
-                    );
-                }
-
-                if (data.type === 'group_stop_added') {
-
-                    if (data.group_id === activeGroupId) {
-                        console.log("Nouă oprire de grup primită:", data.payload);
-                        setGroupStop({
-                            latitude: data.payload.latitude,
-                            longitude: data.payload.longitude,
-                            name: data.payload.name
-                        });
-
-                        Toast.show({
-                            type: 'info',
-                            text1: 'Route Updated! 🛑',
-                            text2: `${data.payload.name} added as a group stop.`,
-                            position: 'top',
-                            visibilityTime: 4000,
-                        });
-                    }
-                }
-            } catch (error) {
-                console.error("Eroare la parsarea mesajului WS:", error);
-            }
-        };
-
-        socket.addEventListener('message', handleWebSocketMessage);
-
-        return () => {
-            socket.removeEventListener('message', handleWebSocketMessage);
-        };
-    }, [socket, activeGroupId]);
+    }, [token, groupId]);
 }

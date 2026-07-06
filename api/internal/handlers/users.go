@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 
 	"database/sql"
 	"encoding/json"
@@ -66,12 +67,19 @@ func CreateUserHandler(database *sql.DB) http.HandlerFunc {
 	}
 }
 
-func GetJWTKey() []byte {
+var jwtSecret []byte
+
+func InitJWTSecret() error {
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
-		log.Fatal("JWT_SECRET environment variable is required")
+		return errors.New("JWT_SECRET environment variable is required")
 	}
-	return []byte(secret)
+	jwtSecret = []byte(secret)
+	return nil
+}
+
+func GetJWTKey() []byte {
+	return jwtSecret
 }
 
 func LoginHandler(database *sql.DB, hub *ws.Hub, rdb *redis.Client) http.HandlerFunc {
@@ -333,7 +341,7 @@ func GetUserMeHandler(database *sql.DB) http.HandlerFunc {
 	}
 }
 
-func UpdateUserLocationHandler(database *sql.DB) http.HandlerFunc {
+func UpdateUserLocationHandler(rdb *redis.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
@@ -358,10 +366,28 @@ func UpdateUserLocationHandler(database *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		if err := db.UpdateUserLocation(database, userID, payload.Latitude, payload.Longitude, payload.Heading, payload.Speed, payload.IsDnd); err != nil {
-			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to update location", nil)
+		ctx := r.Context()
+		locKey := "live_loc:" + userID
+
+		locData, _ := json.Marshal(map[string]interface{}{
+			"latitude":  payload.Latitude,
+			"longitude": payload.Longitude,
+			"heading":   payload.Heading,
+			"speed":     payload.Speed,
+			"isDnd":     payload.IsDnd,
+			"timestamp": time.Now().Unix(),
+		})
+
+		if err := rdb.Set(ctx, locKey, locData, 15*time.Minute).Err(); err != nil {
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to update live location", nil)
 			return
 		}
+
+		rdb.GeoAdd(ctx, "drivers_geo", &redis.GeoLocation{
+			Name:      userID,
+			Longitude: payload.Longitude,
+			Latitude:  payload.Latitude,
+		})
 
 		w.WriteHeader(http.StatusNoContent)
 	}
@@ -423,15 +449,16 @@ func ForgotPasswordHandler(database *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		if err := db.UpdateUserPassword(database, user.ID, string(hashedPassword)); err != nil {
-			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to update password", err)
-			return
-		}
-
 		emailBody := "Hello " + user.Username + ",\n\nYour new temporary password is: " + newPassword + "\n\nPlease login and change it as soon as possible."
 		if err := utils.SendEmail(user.Email, "NightDrive Password Reset", emailBody); err != nil {
 			log.Printf("Failed to send email to %s: %v", user.Email, err)
-			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to send email", err)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to send email. Password was not changed.", err)
+			return
+		}
+
+		if err := db.UpdateUserPassword(database, user.ID, string(hashedPassword)); err != nil {
+			log.Printf("Failed to update password in DB for %s: %v", user.Email, err)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to update password", err)
 			return
 		}
 

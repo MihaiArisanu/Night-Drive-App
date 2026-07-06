@@ -1,21 +1,22 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 
 	"github.com/MihaiArisanu/nightdrive-backend/internal/db"
 	"github.com/google/uuid"
+	"github.com/minio/minio-go/v7"
 )
 
 const maxUploadSize = 5 * 1024 * 1024
 
-func UploadAvatarHandler(database *sql.DB) http.HandlerFunc {
+func UploadAvatarHandler(database *sql.DB, minioClient *minio.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
@@ -34,7 +35,7 @@ func UploadAvatarHandler(database *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		file, _, err := r.FormFile("avatar")
+		file, handler, err := r.FormFile("avatar")
 		if err != nil {
 			RespondWithError(w, http.StatusBadRequest, "api_error", "Eroare la preluarea fișierului", nil)
 			return
@@ -42,8 +43,7 @@ func UploadAvatarHandler(database *sql.DB) http.HandlerFunc {
 		defer file.Close()
 
 		buff := make([]byte, 512)
-		_, err = file.Read(buff)
-		if err != nil {
+		if _, err = file.Read(buff); err != nil {
 			RespondWithError(w, http.StatusInternalServerError, "api_error", "Eroare la citirea fișierului", nil)
 			return
 		}
@@ -54,16 +54,8 @@ func UploadAvatarHandler(database *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		_, err = file.Seek(0, io.SeekStart)
-		if err != nil {
+		if _, err = file.Seek(0, io.SeekStart); err != nil {
 			RespondWithError(w, http.StatusInternalServerError, "api_error", "Eroare internă", nil)
-			return
-		}
-
-		uploadDir := "./uploads/avatars"
-		err = os.MkdirAll(uploadDir, os.ModePerm)
-		if err != nil {
-			RespondWithError(w, http.StatusInternalServerError, "api_error", "Eroare la crearea folderului", nil)
 			return
 		}
 
@@ -79,23 +71,25 @@ func UploadAvatarHandler(database *sql.DB) http.HandlerFunc {
 			ext = ".png"
 		}
 		newFileName := fmt.Sprintf("%s%s", uuid.New().String(), ext)
-		filePath := filepath.Join(uploadDir, newFileName)
+		bucketName := "avatars"
+		ctx := r.Context()
 
-		dst, err := os.Create(filePath)
+		_, err = minioClient.PutObject(ctx, bucketName, newFileName, file, handler.Size, minio.PutObjectOptions{
+			ContentType: filetype,
+		})
 		if err != nil {
-			RespondWithError(w, http.StatusInternalServerError, "api_error", "Eroare la salvarea fișierului", nil)
-			return
-		}
-		defer dst.Close()
-
-		if _, err := io.Copy(dst, file); err != nil {
-			RespondWithError(w, http.StatusInternalServerError, "api_error", "Eroare la scrierea pe disc", nil)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Eroare la salvarea fișierului în Object Storage", nil)
 			return
 		}
 
-		avatarURL := fmt.Sprintf("/uploads/avatars/%s", newFileName)
+		baseURL := os.Getenv("MINIO_PUBLIC_URL")
+		if baseURL == "" {
+			baseURL = "http://localhost:9000"
+		}
+		avatarURL := fmt.Sprintf("%s/%s/%s", baseURL, bucketName, newFileName)
 
 		if err := db.UpdateAvatar(database, userID, avatarURL); err != nil {
+			minioClient.RemoveObject(context.Background(), bucketName, newFileName, minio.RemoveObjectOptions{})
 			RespondWithError(w, http.StatusInternalServerError, "api_error", "Eroare la salvarea în baza de date", nil)
 			return
 		}

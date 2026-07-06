@@ -3,21 +3,19 @@ package ws
 import (
 	"context"
 	"encoding/json"
+	"sync"
 
 	"github.com/redis/go-redis/v9"
 )
 
 type Hub struct {
 	Clients    map[*Client]bool
+	Users      map[string]*Client
 	Broadcast  chan []byte
 	Register   chan *Client
 	Unregister chan *Client
 	Rdb        *redis.Client
-}
-
-type RoutingInfo struct {
-	TargetGroupId   string `json:"targetGroupId"`
-	ExcludeSenderId string `json:"excludeSenderId"`
+	mu         sync.RWMutex
 }
 
 func NewHub(rdb *redis.Client) *Hub {
@@ -26,12 +24,9 @@ func NewHub(rdb *redis.Client) *Hub {
 		Register:   make(chan *Client),
 		Unregister: make(chan *Client),
 		Clients:    make(map[*Client]bool),
+		Users:      make(map[string]*Client),
 		Rdb:        rdb,
 	}
-}
-
-func (h *Hub) Publish(message []byte) {
-	h.Rdb.Publish(context.Background(), "ws_broadcast", message)
 }
 
 func (h *Hub) Run() {
@@ -48,16 +43,25 @@ func (h *Hub) Run() {
 	for {
 		select {
 		case client := <-h.Register:
+			h.mu.Lock()
 			h.Clients[client] = true
+			h.Users[client.UserID] = client
+			h.mu.Unlock()
+
 		case client := <-h.Unregister:
+			h.mu.Lock()
 			if _, ok := h.Clients[client]; ok {
 				delete(h.Clients, client)
+				delete(h.Users, client.UserID)
 				close(client.Send)
 			}
+			h.mu.Unlock()
+
 		case message := <-h.Broadcast:
 			var route RoutingInfo
 			json.Unmarshal(message, &route)
 
+			h.mu.Lock()
 			for client := range h.Clients {
 				if route.TargetGroupId != "" && client.GroupID != route.TargetGroupId {
 					continue
@@ -73,19 +77,25 @@ func (h *Hub) Run() {
 					delete(h.Clients, client)
 				}
 			}
+			h.mu.Unlock()
 		}
 	}
 }
 
 func (h *Hub) SendToUser(userID string, message []byte) {
-	for client := range h.Clients {
-		if client.UserID == userID {
-			select {
-			case client.Send <- message:
-			default:
-				close(client.Send)
-				delete(h.Clients, client)
-			}
+	h.mu.RLock()
+	client, ok := h.Users[userID]
+	h.mu.RUnlock()
+
+	if ok {
+		select {
+		case client.Send <- message:
+		default:
+			h.mu.Lock()
+			close(client.Send)
+			delete(h.Clients, client)
+			delete(h.Users, userID)
+			h.mu.Unlock()
 		}
 	}
 }

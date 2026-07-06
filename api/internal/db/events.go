@@ -40,8 +40,10 @@ func CreateEvent(dbConn *sql.DB, req *models.EventCreateRequest) (*models.Event,
 	event := &models.Event{
 		UserID:      req.UserID,
 		EventType:   req.EventType,
-		Latitude:    req.Latitude,
-		Longitude:   req.Longitude,
+		Coordinates: models.Coordinates{
+			Latitude:  req.Latitude,
+			Longitude: req.Longitude,
+		},
 		Description: req.Description,
 		Upvotes:     0,
 		Downvotes:   0,

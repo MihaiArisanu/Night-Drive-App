@@ -140,15 +140,6 @@ func UpdateAvatar(db *sql.DB, userID string, avatarURL string) error {
 	return nil
 }
 
-func UpdateFCMToken(db *sql.DB, userID string, token string) error {
-	query := `UPDATE users SET fcm_token = $1 WHERE id = $2`
-	_, err := db.Exec(query, token, userID)
-	if err != nil {
-		return fmt.Errorf("eroare la actualizarea tokenului FCM: %v", err)
-	}
-	return nil
-}
-
 func UpdateUserLocation(dbConn *sql.DB, userID string, lat, lng, heading, speed float64, isDnd bool) error {
 	query := `
 		UPDATE users

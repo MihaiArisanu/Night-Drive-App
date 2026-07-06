@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/MihaiArisanu/nightdrive-backend/internal/db"
@@ -13,20 +17,38 @@ import (
 )
 
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	database, err := db.Connect()
 	if err != nil {
 		log.Fatalf("Server startup failed: %v", err)
 	}
-	defer database.Close()
+	defer func() {
+		log.Println("Closing database connection...")
+		database.Close()
+	}()
 
-	go db.StartCleanupWorker(database)
-	go db.StartChecksumWorker(database)
+	if err := handlers.InitJWTSecret(); err != nil {
+		log.Fatalf("Failed to initialize JWT secret: %v", err)
+	}
+
+	go db.StartMaintenanceWorker(ctx, database)
 
 	redisURL := os.Getenv("REDIS_URL")
 	if redisURL == "" {
 		redisURL = "localhost:6379"
 	}
 	rdb := db.NewRedisClient(redisURL)
+	defer func() {
+		log.Println("Closing Redis client...")
+		rdb.Close()
+	}()
+
+	minioClient, err := db.NewMinioClient()
+	if err != nil {
+		log.Fatalf("Failed to initialize MinIO: %v", err)
+	}
 
 	hub := ws.NewHub(rdb)
 	go hub.Run()
@@ -41,19 +63,18 @@ func main() {
 		fmt.Fprintf(w, `{"error": "Route not found", "path": "%s"}`, r.URL.Path)
 	})
 
-	authRateLimit := handlers.RateLimit(rdb, 3, time.Minute)
-
-	mux.HandleFunc("/api/v1/users", authRateLimit(handlers.CreateUserHandler(database)))
-	mux.HandleFunc("/api/v1/login", authRateLimit(handlers.LoginHandler(database, hub, rdb)))
-	mux.HandleFunc("/api/v1/auth/refresh", authRateLimit(handlers.RefreshTokenHandler(database, rdb)))
-	mux.HandleFunc("/api/v1/auth/logout", authRateLimit(handlers.RequireAuth(handlers.LogoutHandler(rdb))))
-	mux.HandleFunc("/api/v1/auth/forgot-password", authRateLimit(handlers.ForgotPasswordHandler(database)))
+	strictRateLimit := handlers.RateLimit(rdb, 5, time.Minute)
+	mux.HandleFunc("/api/v1/login", strictRateLimit(handlers.LoginHandler(database, hub, rdb)))
+	mux.HandleFunc("/api/v1/users", strictRateLimit(handlers.CreateUserHandler(database)))
+	mux.HandleFunc("/api/v1/auth/refresh", strictRateLimit(handlers.RefreshTokenHandler(database, rdb)))
+	mux.HandleFunc("/api/v1/auth/logout", strictRateLimit(handlers.RequireAuth(handlers.LogoutHandler(rdb))))
+	mux.HandleFunc("/api/v1/auth/forgot-password", strictRateLimit(handlers.ForgotPasswordHandler(database)))
 	mux.HandleFunc("/api/v1/events/nearby", handlers.GetNearbyEventsHandler(database))
 	mux.HandleFunc("/api/v1/users/search", handlers.RequireAuth(handlers.SearchUserHandler(database)))
 	mux.HandleFunc("/api/v1/users/me", handlers.RequireAuth(handlers.GetUserMeHandler(database)))
 	mux.HandleFunc("/api/v1/users/feedback", handlers.RequireAuth(handlers.SubmitFeedbackHandler(database)))
-	mux.HandleFunc("/api/v1/users/location", handlers.RequireAuth(handlers.UpdateUserLocationHandler(database)))
 
+	mux.HandleFunc("/api/v1/users/location", handlers.RequireAuth(handlers.UpdateUserLocationHandler(rdb)))
 	mux.HandleFunc("/api/v1/events", handlers.RequireAuth(handlers.CreateEventHandler(database, hub)))
 
 	mux.HandleFunc("/api/v1/events/vote", handlers.RequireAuth(handlers.VoteEventHandler(database)))
@@ -85,7 +106,7 @@ func main() {
 		handlers.ServeWS(hub, w, r)
 	})
 
-	mux.HandleFunc("/api/v1/users/avatar", handlers.RequireAuth(handlers.UploadAvatarHandler(database)))
+	mux.HandleFunc("/api/v1/users/avatar", handlers.RequireAuth(handlers.UploadAvatarHandler(database, minioClient)))
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -95,14 +116,33 @@ func main() {
 	host := os.Getenv("HOST")
 	addr := fmt.Sprintf("%s:%s", host, port)
 
-	log.Printf("Starting backend server on %s\n", addr)
-
 	handlerWithCORS := handlers.CORSMiddleware(mux)
-
 	handlerWithLogging := handlers.LoggingMiddleware(handlerWithCORS)
 
-	err = http.ListenAndServe(addr, handlerWithLogging)
-	if err != nil {
-		log.Fatalf("Server error: %v", err)
+	srv := &http.Server{
+		Addr:         addr,
+		Handler:      handlerWithLogging,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
+
+	go func() {
+		log.Printf("Starting backend server on %s\n", addr)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("Server forced to shutdown due to error: %v", err)
+		}
+	}()
+
+	<-ctx.Done()
+	log.Println("Shutting down gracefully... Press Ctrl+C again to force exit.")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Fatalf("Server forced to shutdown violently: %v", err)
+	}
+
+	log.Println("Backend server stopped cleanly.")
 }

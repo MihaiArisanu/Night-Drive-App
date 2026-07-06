@@ -6,12 +6,13 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/MihaiArisanu/nightdrive-backend/internal/db"
 	"github.com/MihaiArisanu/nightdrive-backend/internal/models"
 	"github.com/MihaiArisanu/nightdrive-backend/internal/ws"
 	"github.com/google/uuid"
 )
 
-func AddGroupStopHandler(db *sql.DB, hub *ws.Hub) http.HandlerFunc {
+func AddGroupStopHandler(database *sql.DB, hub *ws.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
@@ -36,11 +37,7 @@ func AddGroupStopHandler(db *sql.DB, hub *ws.Hub) http.HandlerFunc {
 			return
 		}
 
-		_, err := db.Exec(`
-            INSERT INTO group_stops (group_id, added_by, name, location) 
-            VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326))`,
-			groupID, userID, req.Name, req.Longitude, req.Latitude)
-
+		err := db.CreateGroupStop(r.Context(), database, groupID, userID, req.Name, req.Longitude, req.Latitude)
 		if err != nil {
 			log.Printf("Eroare la salvarea opririi: %v", err)
 			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to save stop", nil)

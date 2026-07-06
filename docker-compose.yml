@@ -53,5 +53,36 @@ services:
       - zen-engine 
     restart: unless-stopped
 
+  minio:
+    image: minio/minio:latest
+    container_name: nightdrive-minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - nightdrive-minio-data:/data
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: nightdrive-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - nightdrive-api
+    restart: unless-stopped
+
 volumes:
   nightdrive-db-data:
+  nightdrive-minio-data:
+  caddy_data:
+  caddy_config:

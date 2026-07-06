@@ -3,9 +3,8 @@ package models
 import "time"
 
 type PlaceRequest struct {
-	Name      string  `json:"name"`
-	Latitude  float64 `json:"latitude"`
-	Longitude float64 `json:"longitude"`
+	Name string `json:"name"`
+	Coordinates
 }
 
 type PlacePatchRequest struct {
@@ -13,9 +12,8 @@ type PlacePatchRequest struct {
 }
 
 type PlaceResponse struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Latitude  float64   `json:"latitude"`
-	Longitude float64   `json:"longitude"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Coordinates
 	CreatedAt time.Time `json:"created_at"`
 }

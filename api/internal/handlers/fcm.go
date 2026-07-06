@@ -4,13 +4,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+
+	"github.com/MihaiArisanu/nightdrive-backend/internal/db"
 )
 
 type FCMTokenRequest struct {
 	Token string `json:"token"`
 }
 
-func UpdateFCMTokenHandler(db *sql.DB) http.HandlerFunc {
+func UpdateFCMTokenHandler(database *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut {
 			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
@@ -29,7 +31,7 @@ func UpdateFCMTokenHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		_, err := db.Exec("UPDATE users SET fcm_token = $1 WHERE id = $2", req.Token, userID)
+		err := db.UpdateFCMToken(r.Context(), database, userID, req.Token)
 		if err != nil {
 			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to update token", nil)
 			return

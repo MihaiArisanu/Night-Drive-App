@@ -1,10 +1,14 @@
 import * as Keychain from 'react-native-keychain';
 import { API_BASE_URL } from '@env';
+import { useSettingsStore } from '../store/useSettingsStore';
 
 export const AuthStorage = {
     saveTokens: async (accessToken: string, refreshToken: string) => {
         await Keychain.setGenericPassword('tokens', JSON.stringify({ accessToken, refreshToken }));
+
+        useSettingsStore.getState().setToken(accessToken);
     },
+
     getAccessToken: async () => {
         const credentials = await Keychain.getGenericPassword();
         if (credentials) {
@@ -13,6 +17,7 @@ export const AuthStorage = {
         }
         return null;
     },
+
     getRefreshToken: async () => {
         const credentials = await Keychain.getGenericPassword();
         if (credentials) {
@@ -21,8 +26,10 @@ export const AuthStorage = {
         }
         return null;
     },
+
     clearTokens: async () => {
         await Keychain.resetGenericPassword();
+        useSettingsStore.getState().clearSettings();
     },
 };
 
@@ -41,45 +48,39 @@ const processQueue = (error: any, token: string | null = null) => {
 };
 
 export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
-    const token = await AuthStorage.getAccessToken();
+    let token = useSettingsStore.getState().token;
+
+    if (!token) {
+        token = await AuthStorage.getAccessToken();
+    }
 
     const headers: Record<string, string> = {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
         ...(options.headers as Record<string, string>),
     };
 
-    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
-    const url = `${API_BASE_URL}${cleanEndpoint}`;
-    console.log(`[API] Request: ${url}`);
-
+    let url = `${API_BASE_URL}${endpoint}`;
     let response = await fetch(url, { ...options, headers });
 
-    if (response.status === 401) {
-        console.log(`[API] 401 Unauthorized at ${cleanEndpoint}. Trying Refresh...`);
-
-        const refreshToken = await AuthStorage.getRefreshToken();
-
-        if (!refreshToken) {
-            await AuthStorage.clearTokens();
-            throw new Error("Session expired. Please log in again.");
-        }
-
+    if (response.status === 401 && token) {
         if (isRefreshing) {
             try {
                 const newToken = await new Promise<string>((resolve, reject) => {
                     failedQueue.push({ resolve, reject });
                 });
                 headers.Authorization = `Bearer ${newToken}`;
-                response = await fetch(url, { ...options, headers });
+                return await fetch(url, { ...options, headers });
             } catch (err) {
                 throw err;
             }
         } else {
             isRefreshing = true;
             try {
-                const refreshUrl = `${API_BASE_URL}/auth/refresh`;
-                const refreshResponse = await fetch(refreshUrl, {
+                const refreshToken = await AuthStorage.getRefreshToken();
+                if (!refreshToken) throw new Error("No refresh token available");
+
+                const refreshResponse = await fetch(`${API_BASE_URL}/refresh`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ refresh_token: refreshToken })
@@ -90,7 +91,6 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
                 }
 
                 const refreshData = await refreshResponse.json();
-
                 const newAccessToken = refreshData.access_token;
                 const newRefreshToken = refreshData.refresh_token || refreshToken;
 
@@ -112,7 +112,6 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
     }
 
     const responseText = await response.text();
-    console.log(`[API] Response: ${responseText}`);
 
     if (!response.ok) {
         throw new Error(responseText || 'Error from NightDrive server');

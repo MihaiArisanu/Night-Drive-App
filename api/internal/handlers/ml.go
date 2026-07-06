@@ -64,7 +64,7 @@ func DislikedAreasHandler(database *sql.DB) http.HandlerFunc {
 			json.NewEncoder(w).Encode(map[string]interface{}{"areas": areas})
 
 		case http.MethodPost:
-			var req models.DislikedAreaRequest
+			var req models.DislikeRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid request body", nil)
 				return

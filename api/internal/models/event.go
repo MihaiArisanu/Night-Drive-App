@@ -3,19 +3,17 @@ package models
 import "time"
 
 type EventCreateRequest struct {
-	UserID      string  `json:"user_id"`
-	EventType   string  `json:"event_type"`
-	Latitude    float64 `json:"latitude"`
-	Longitude   float64 `json:"longitude"`
-	Description string  `json:"description"`
+	UserID    string `json:"user_id"`
+	EventType string `json:"event_type"`
+	Coordinates
+	Description string `json:"description"`
 }
 
 type Event struct {
-	ID          string    `json:"id"`
-	UserID      string    `json:"user_id"`
-	EventType   string    `json:"event_type"`
-	Latitude    float64   `json:"latitude"`
-	Longitude   float64   `json:"longitude"`
+	ID        string `json:"id"`
+	UserID    string `json:"user_id"`
+	EventType string `json:"event_type"`
+	Coordinates
 	Description string    `json:"description"`
 	Upvotes     int       `json:"upvotes"`
 	Downvotes   int       `json:"downvotes"`

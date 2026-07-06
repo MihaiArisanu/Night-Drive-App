@@ -35,7 +35,7 @@ func SaveLocationHistory(dbConn *sql.DB, userID string, points []models.Location
 	return tx.Commit()
 }
 
-func SaveDislikedArea(dbConn *sql.DB, userID string, req models.DislikedAreaRequest) error {
+func SaveDislikedArea(dbConn *sql.DB, userID string, req models.DislikeRequest) error {
 	query := `
 		INSERT INTO disliked_areas (user_id, location, reason)
 		VALUES ($1, ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography, $4)

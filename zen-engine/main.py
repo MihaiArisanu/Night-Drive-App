@@ -1,14 +1,21 @@
 import os
+import asyncio
 from typing import List
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, Header
+from pydantic import BaseModel
 
 import database
 import ml_engine
 import geo_utils
 
-app = FastAPI(title="The Zen Engine", version="1.1")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.pool = await database.get_db_pool()
+    yield
+    await app.state.pool.close()
 
-from pydantic import BaseModel
+app = FastAPI(title="The Zen Engine", version="1.1", lifespan=lifespan)
 
 class Waypoint(BaseModel):
     lat: float
@@ -28,22 +35,14 @@ async def verify_internal_secret(x_internal_secret: str = Header(None)):
     expected_secret = os.getenv("INTERNAL_SECRET")
     
     if not expected_secret:
-        print("EROARE CRITICĂ: INTERNAL_SECRET nu este setat în .env!")
+        print("Critical error: INTERNAL_SECRET not set!")
         return 
 
     if x_internal_secret != expected_secret:
         raise HTTPException(
             status_code=403, 
-            detail="Forbidden: Accesul neautorizat. Secret invalid."
+            detail="Forbidden: Unauthorized access. Invalid secret."
         )
-
-@app.on_event("startup")
-async def startup():
-    app.state.pool = await database.get_db_pool()
-
-@app.on_event("shutdown")
-async def shutdown():
-    await app.state.pool.close()
 
 @app.get("/health")
 async def health_check():
@@ -72,7 +71,8 @@ async def generate_path(payload: ZenRequest):
         is_cold_start = True
         waypoints_tuples = await geo_utils.generate_forward_path_async(payload.current_lat, payload.current_lng, heading=payload.heading)
     else:
-        cluster_centroids = ml_engine.get_zen_clusters(history)
+        cluster_centroids = await asyncio.to_thread(ml_engine.get_zen_clusters, history)
+        
         valid_waypoints = geo_utils.filter_waypoints(cluster_centroids, bad_areas)
         
         if len(valid_waypoints) < 4:

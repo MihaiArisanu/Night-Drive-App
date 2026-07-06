@@ -1,0 +1,3 @@
+:80 {
+    reverse_proxy nightdrive-api:8080
+}

@@ -1,7 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { API_BASE_URL } from '@env';
 import { useSettingsStore } from '../store/useSettingsStore';
-import { decodePolyline } from '../utilis/polyline';
 
 export function useZenSessionSync(
     isZenSession: boolean,
@@ -11,10 +10,20 @@ export function useZenSessionSync(
 ) {
     const { token } = useSettingsStore();
 
+    const stateRef = useRef({ latitude, longitude, appendRoute });
+
     useEffect(() => {
-        if (!isZenSession || latitude === 0) return;
+        stateRef.current = { latitude, longitude, appendRoute };
+    }, [latitude, longitude, appendRoute]);
+
+    useEffect(() => {
+        if (!isZenSession) return;
 
         const interval = setInterval(async () => {
+            const { latitude: currentLat, longitude: currentLng, appendRoute: currentAppendRoute } = stateRef.current;
+
+            if (currentLat === 0) return;
+
             try {
                 const response = await fetch(`${API_BASE_URL}/routes/zen/sync`, {
                     method: 'POST',
@@ -22,20 +31,29 @@ export function useZenSessionSync(
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${token}`
                     },
-                    body: JSON.stringify({ latitude, longitude })
+                    body: JSON.stringify({
+                        latitude: currentLat,
+                        longitude: currentLng
+                    })
                 });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP Error: ${response.status}`);
+                }
 
                 const data = await response.json();
 
-                if (data.newPolylineChunk) {
-                    const newCoordinates = decodePolyline(data.newPolylineChunk);
-                    appendRoute(newCoordinates);
+                if (data.status === 'extended' && data.next_lat && data.next_lng) {
+                    currentAppendRoute([{
+                        latitude: data.next_lat,
+                        longitude: data.next_lng
+                    }]);
                 }
             } catch (error) {
-                console.log("ZenSession sync failed, retrying on next tick...");
+                console.log("ZenSession sync failed, retrying on next tick...", error);
             }
         }, 10000);
 
         return () => clearInterval(interval);
-    }, [isZenSession, latitude, longitude, token]);
+    }, [isZenSession, token]);
 }
