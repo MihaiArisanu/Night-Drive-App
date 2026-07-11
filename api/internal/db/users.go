@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 
@@ -54,18 +55,23 @@ func GetUserByEmail(dbConn *sql.DB, email string) (*models.User, error) {
 
 func GetUserByID(dbConn *sql.DB, id string) (*models.User, error) {
 	query := `
-		SELECT id, username, tag, email, password_hash, created_at 
+		SELECT id, username, tag, email, password_hash, created_at, profile_picture_url
 		FROM users 
 		WHERE id = $1
 	`
 
 	var user models.User
+	var profilePic sql.NullString
 	err := dbConn.QueryRowContext(context.Background(), query, id).Scan(
-		&user.ID, &user.Username, &user.Tag, &user.Email, &user.PasswordHash, &user.CreatedAt,
+		&user.ID, &user.Username, &user.Tag, &user.Email, &user.PasswordHash, &user.CreatedAt, &profilePic,
 	)
 
 	if err != nil {
 		return nil, err
+	}
+
+	if profilePic.Valid {
+		user.ProfilePictureURL = profilePic.String
 	}
 
 	return &user, nil
@@ -97,7 +103,8 @@ func GetNearbyActiveUsers(dbConn *sql.DB, lat, lng float64, userID string) ([]mo
 	query := `
 		SELECT 
 			u.id, 
-			u.username as name, 
+			u.username as name,
+			COALESCE(u.profile_picture_url, '') AS profile_picture_url,
 			ST_Y(u.location::geometry) as latitude, 
 			ST_X(u.location::geometry) as longitude, 
 			COALESCE(u.heading, 0.0) as heading
@@ -121,7 +128,7 @@ func GetNearbyActiveUsers(dbConn *sql.DB, lat, lng float64, userID string) ([]mo
 	users := []models.NearbyUser{}
 	for rows.Next() {
 		var u models.NearbyUser
-		err := rows.Scan(&u.ID, &u.Name, &u.Latitude, &u.Longitude, &u.Heading)
+		err := rows.Scan(&u.ID, &u.Name, &u.ProfilePictureURL, &u.Latitude, &u.Longitude, &u.Heading)
 		if err != nil {
 			continue
 		}
@@ -131,13 +138,75 @@ func GetNearbyActiveUsers(dbConn *sql.DB, lat, lng float64, userID string) ([]mo
 	return users, nil
 }
 
-func UpdateAvatar(db *sql.DB, userID string, avatarURL string) error {
-	query := `UPDATE users SET avatar_url = $1 WHERE id = $2`
-	_, err := db.Exec(query, avatarURL, userID)
-	if err != nil {
-		return fmt.Errorf("eroare la actualizarea avatarului: %v", err)
+func GetGroupParticipants(ctx context.Context, database *sql.DB, requesterID string, userIDs []string) ([]models.GroupParticipant, error) {
+	participants := make([]models.GroupParticipant, 0, len(userIDs))
+	const query = `
+		SELECT
+			u.id,
+			u.username,
+			u.tag,
+			COALESCE(u.profile_picture_url, ''),
+			CASE WHEN u.id = $1 THEN false ELSE EXISTS (
+				SELECT 1
+				FROM friendships f
+				WHERE (f.user_id_1 = $1 AND f.user_id_2 = u.id)
+				   OR (f.user_id_1 = u.id AND f.user_id_2 = $1)
+			) END AS is_friend
+		FROM users u
+		WHERE u.id = $2
+	`
+
+	for _, userID := range userIDs {
+		var participant models.GroupParticipant
+		if err := database.QueryRowContext(ctx, query, requesterID, userID).Scan(
+			&participant.ID,
+			&participant.Name,
+			&participant.Tag,
+			&participant.ProfilePictureURL,
+			&participant.IsFriend,
+		); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			return nil, fmt.Errorf("load group participant: %w", err)
+		}
+		participants = append(participants, participant)
 	}
-	return nil
+	return participants, nil
+}
+
+func ReplaceAvatar(ctx context.Context, database *sql.DB, userID string, avatarURL string) (string, error) {
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("begin avatar update transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var previousURL string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COALESCE(profile_picture_url, '')
+		FROM users
+		WHERE id = $1
+		FOR UPDATE
+	`, userID).Scan(&previousURL); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", fmt.Errorf("user not found")
+		}
+		return "", fmt.Errorf("read previous avatar: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE users
+		SET profile_picture_url = $1
+		WHERE id = $2
+	`, avatarURL, userID); err != nil {
+		return "", fmt.Errorf("update avatar: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("commit avatar update: %w", err)
+	}
+	return previousURL, nil
 }
 
 func UpdateUserLocation(dbConn *sql.DB, userID string, lat, lng, heading, speed float64, isDnd bool) error {
@@ -157,6 +226,15 @@ func UpdateUserPassword(dbConn *sql.DB, userID string, newPasswordHash string) e
 	_, err := dbConn.Exec(query, newPasswordHash, userID)
 	if err != nil {
 		return fmt.Errorf("failed to update user password: %v", err)
+	}
+	return nil
+}
+
+func UpdateUserProfile(dbConn *sql.DB, userID string, name string, email string) error {
+	query := `UPDATE users SET username = $1, email = $2 WHERE id = $3`
+	_, err := dbConn.Exec(query, name, email, userID)
+	if err != nil {
+		return fmt.Errorf("failed to update user profile: %v", err)
 	}
 	return nil
 }

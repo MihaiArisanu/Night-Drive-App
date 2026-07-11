@@ -150,7 +150,7 @@ export default function AuthScreen({ route, navigation }: any) {
 
                     <TextInput
                         style={styles.input}
-                        placeholder="Email or your code"
+                        placeholder="Email"
                         placeholderTextColor="#888"
                         value={email}
                         onChangeText={setEmail}

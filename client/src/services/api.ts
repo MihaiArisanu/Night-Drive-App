@@ -114,6 +114,11 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
     const responseText = await response.text();
 
     if (!response.ok) {
+        const contentType = response.headers.get('content-type') || '';
+        const isHtmlResponse = contentType.includes('text/html') || /^\s*<(?:!doctype|html)/i.test(responseText);
+        if (isHtmlResponse) {
+            throw new Error('NightDrive service is temporarily unavailable. Please try again.');
+        }
         throw new Error(responseText || 'Error from NightDrive server');
     }
 
@@ -123,8 +128,43 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
 
     try {
         return JSON.parse(responseText);
-    } catch (e) {
+    } catch {
         console.error("[API] JSON parse error. Server returned non-JSON response.");
         throw new Error("Server did not return a valid JSON response.");
     }
+};
+
+const urlTimestamps: Record<string, number> = {};
+
+export const getAvatarUrl = (url: string | undefined | null) => {
+    if (!url) return null;
+
+    const apiOrigin = API_BASE_URL.replace(/\/api\/v1\/?$/, '');
+    const avatarMarker = '/avatars/';
+    const markerIndex = url.lastIndexOf(avatarMarker);
+
+    let fullUrl: string;
+    if (markerIndex >= 0) {
+        const objectName = url
+            .slice(markerIndex + avatarMarker.length)
+            .split(/[?#]/, 1)[0];
+        fullUrl = `${API_BASE_URL}/avatars/${encodeURIComponent(objectName)}`;
+    } else if (url.startsWith('/')) {
+        fullUrl = `${apiOrigin}${url}`;
+    } else {
+        fullUrl = url;
+    }
+
+    if (!urlTimestamps[fullUrl]) {
+        urlTimestamps[fullUrl] = Date.now();
+    }
+
+    return `${fullUrl}?t=${urlTimestamps[fullUrl]}`;
+};
+
+export const getAvatarSource = (url: string | undefined | null) => {
+    const uri = getAvatarUrl(url);
+    if (!uri) return null;
+
+    return { uri };
 };

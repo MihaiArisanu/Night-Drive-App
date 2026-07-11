@@ -1,8 +1,10 @@
 import { ArrowLeft, Bookmark, MapPinOff, MessageSquare, Search, UserPlus, X, Users, LogOut, CheckCircle, AlertCircle, Info } from "lucide-react-native";
-import { Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, Modal, KeyboardAvoidingView, Platform, ActivityIndicator, Linking } from "react-native";
+import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, Modal, KeyboardAvoidingView, Platform, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useState } from "react";
+import { useCallback, useState } from "react";
+import { useFocusEffect } from '@react-navigation/native';
 import { ActionButton } from "../components/ActionButton";
+import { ProfileAvatar } from '../components/ProfileAvatar';
 
 import { useDeleteAccount } from "../hooks/useDeleteAccount";
 import { useFriendRequests, FriendRequestResult } from "../hooks/useFriendRequests";
@@ -11,14 +13,18 @@ import { useCurrentUser } from '../hooks/useCurrentUser';
 import { apiFetch } from '../services/api';
 
 export default function MenuScreen({ navigation }: any) {
-  const { currentUser } = useCurrentUser();
+  const { currentUser, refetchUser } = useCurrentUser();
   const { confirmAndDelete, isDeleting } = useDeleteAccount();
   const {
     activeGroupId, setActiveGroupId,
-    groupMembers, setGroupMembers
+    setGroupMembers
   } = useSettingsStore();
 
   const [isTermsVisible, setIsTermsVisible] = useState(false);
+
+  useFocusEffect(useCallback(() => {
+    refetchUser();
+  }, [refetchUser]));
 
   const {
     isSearching,
@@ -64,11 +70,21 @@ export default function MenuScreen({ navigation }: any) {
         setFeedback({ type: 'success', text: `Request sent to ${result.name}! ✓` });
         setSearchTag("");
         break;
+      case 'friendship_repaired':
+        setFeedback({ type: 'success', text: `Friendship with ${result.name} restored! ✓` });
+        setSearchTag("");
+        break;
       case 'not_found':
         setFeedback({ type: 'error', text: 'No driver found with this TAG.' });
         break;
       case 'already_friends':
         setFeedback({ type: 'info', text: 'You are already friends with this driver.' });
+        break;
+      case 'already_pending':
+        setFeedback({ type: 'info', text: 'Your friend request is already pending.' });
+        break;
+      case 'incoming_pending':
+        setFeedback({ type: 'info', text: 'This driver already sent you a request. Check Notifications.' });
         break;
       case 'self':
         setFeedback({ type: 'info', text: 'You cannot send a friend request to yourself.' });
@@ -106,7 +122,11 @@ export default function MenuScreen({ navigation }: any) {
           activeOpacity={0.7}
         >
           <View style={styles.avatarContainer}>
-            <Image source={require("../assets/logo.png")} style={styles.avatar} />
+            <ProfileAvatar
+              profilePictureUrl={currentUser?.profile_picture_url}
+              size={100}
+              style={styles.avatar}
+            />
             <View style={styles.addPhotoBadge}>
               <Text style={{ color: "white", fontSize: 18 }}>✎</Text>
             </View>
@@ -133,18 +153,6 @@ export default function MenuScreen({ navigation }: any) {
                 <LogOut color="#EF4444" size={20} />
               </TouchableOpacity>
             </View>
-
-            {groupMembers.map((member) => (
-              <View key={member.id} style={styles.memberCard}>
-                <Text style={styles.memberText}>{member.name} {member.tag}</Text>
-                <TouchableOpacity
-                  onPress={() => sendFriendRequest(member.tag)}
-                  style={styles.addMemberBtn}
-                >
-                  <UserPlus color="#A855F7" size={18} />
-                </TouchableOpacity>
-              </View>
-            ))}
           </View>
         )}
 
@@ -473,24 +481,6 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   leaveButton: {
-    padding: 5,
-  },
-  memberCard: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    backgroundColor: "#0A0A0A",
-    padding: 15,
-    borderRadius: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: "#1A1A1A",
-  },
-  memberText: {
-    color: "white",
-    fontWeight: "bold",
-  },
-  addMemberBtn: {
     padding: 5,
   },
   menuList: {

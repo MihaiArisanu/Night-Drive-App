@@ -6,15 +6,13 @@ import { useSettingsStore } from '../store/useSettingsStore';
 import { useNavigation } from '@react-navigation/native';
 
 interface InvitePayload {
+    inviteId: string;
+    senderId?: string;
+    senderName?: string;
     friendName: string;
     distance: string;
     eta: string;
     groupId: string;
-}
-
-interface RouteSyncPayload {
-    finalDestination: { latitude: number; longitude: number; name?: string };
-    rendezvousPoint?: { latitude: number; longitude: number };
 }
 
 interface VoicePayload {
@@ -53,7 +51,6 @@ export function useWebSocket(
             ws.current = new WebSocket(wsUrl);
 
             ws.current.onopen = () => {
-                console.log("[WebSocket] Connected.");
                 if (reconnectTimeout.current) {
                     clearTimeout(reconnectTimeout.current);
                     reconnectTimeout.current = null;
@@ -64,10 +61,38 @@ export function useWebSocket(
                 try {
                     const message = JSON.parse(event.data);
 
-                    const { activeGroupId, setGroupStop, clearSettings } = useSettingsStore.getState();
+                    const {
+                        activeGroupId,
+                        setActiveGroupId,
+                        setDraftGroupId,
+                        setGroupStop,
+                        clearSettings,
+                        addPendingGroupInvite,
+                    } = useSettingsStore.getState();
 
                     if (message.type === 'RIDE_INVITE') {
+                        const payload = message.payload as InvitePayload;
+                        if (payload.inviteId && payload.groupId) {
+                            addPendingGroupInvite({
+                                id: payload.inviteId,
+                                groupId: payload.groupId,
+                                senderId: payload.senderId,
+                                senderName: payload.senderName || payload.friendName || 'Driver',
+                            });
+                        }
                         callbacksRef.current.onInviteReceived(message.payload);
+                    } else if (message.type === 'GROUP_INVITE_ACCEPTED') {
+                        const acceptedGroupId = message.payload?.groupId;
+                        if (acceptedGroupId) {
+                            setActiveGroupId(acceptedGroupId);
+                            setDraftGroupId(null);
+                            Toast.show({
+                                type: 'success',
+                                text1: 'Group Ride started',
+                                text2: 'Your invitation was accepted.',
+                                position: 'top',
+                            });
+                        }
                     } else if (message.type === 'VOICE_MESSAGE') {
                         callbacksRef.current.onVoiceReceived(message.payload);
                     } else if (message.type === 'KICK_DUPLICATE') {
@@ -83,7 +108,6 @@ export function useWebSocket(
                         );
                     } else if (message.type === 'group_stop_added') {
                         if (message.group_id === activeGroupId) {
-                            console.log("New group stop:", message.payload);
                             setGroupStop({
                                 latitude: message.payload.latitude,
                                 longitude: message.payload.longitude,
@@ -104,17 +128,13 @@ export function useWebSocket(
                 }
             };
 
-            ws.current.onerror = (err) => {
-                console.log('[WebSocket] Connection error. Closing...');
+            ws.current.onerror = () => {
                 ws.current?.close();
             };
 
-            ws.current.onclose = (e) => {
-                console.log('[WebSocket] Connection closed.');
-
+            ws.current.onclose = () => {
                 if (!isIntentionalClose.current) {
                     reconnectTimeout.current = setTimeout(() => {
-                        console.log('[WebSocket] Reconnecting...');
                         connect();
                     }, 5000);
                 }
@@ -132,5 +152,5 @@ export function useWebSocket(
                 ws.current.close();
             }
         };
-    }, [token, groupId]);
+    }, [token, groupId, navigation]);
 }

@@ -2,6 +2,8 @@ import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import Toast from 'react-native-toast-message';
+import { SafeAreaProvider } from 'react-native-safe-area-context'; // <-- IMPORTUL NOU ADAUGAT
+
 import SplashScreen from './src/screens/SplashScreen';
 import WelcomeScreen from './src/screens/WelcomeScreen';
 import AuthScreen from './src/screens/AuthScreen';
@@ -18,7 +20,7 @@ const Stack = createNativeStackNavigator();
 
 export default function App() {
   return (
-    <>
+    <SafeAreaProvider>
       <NavigationContainer>
         <Stack.Navigator
           initialRouteName="Splash"
@@ -45,6 +47,6 @@ export default function App() {
         </Stack.Navigator>
       </NavigationContainer>
       <Toast position="bottom" bottomOffset={80} />
-    </>
+    </SafeAreaProvider>
   );
 }

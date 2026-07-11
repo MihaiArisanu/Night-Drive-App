@@ -1,13 +1,20 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, Image, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Modal } from "react-native";
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Modal, Alert } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { ArrowLeft, Camera, Image as ImageIcon, Mail, User, X } from "lucide-react-native";
+import { ArrowLeft, Camera, Image as ImageIcon, Mail, User, X, Lock } from "lucide-react-native";
 import { ActionButton } from "../components/ActionButton";
+import { ProfileAvatar } from "../components/ProfileAvatar";
 import { useCurrentUser } from "../hooks/useCurrentUser";
 import { useSettingsStore } from '../store/useSettingsStore';
 import { API_BASE_URL } from '@env';
 
 import { launchCamera, launchImageLibrary, MediaType } from 'react-native-image-picker';
+
+interface SelectedPhoto {
+    uri: string;
+    fileName?: string;
+    type?: string;
+}
 
 export default function EditProfileScreen({ navigation }: any) {
     const { currentUser, refetchUser } = useCurrentUser();
@@ -18,7 +25,48 @@ export default function EditProfileScreen({ navigation }: any) {
     const [isSaving, setIsSaving] = useState(false);
 
     const [isPhotoModalVisible, setIsPhotoModalVisible] = useState(false);
-    const [photoUri, setPhotoUri] = useState<string | null>(null);
+    const [selectedPhoto, setSelectedPhoto] = useState<SelectedPhoto | null>(null);
+
+    const [oldPassword, setOldPassword] = useState("");
+    const [newPassword, setNewPassword] = useState("");
+    const [isChangingPassword, setIsChangingPassword] = useState(false);
+    const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+    const [passwordFeedback, setPasswordFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+    const handleChangePassword = async () => {
+        if (!oldPassword.trim() || !newPassword.trim()) return;
+        setIsChangingPassword(true);
+        setPasswordFeedback(null);
+        try {
+            const response = await fetch(`${API_BASE_URL}/users/password`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
+            });
+
+            if (!response.ok) {
+                const text = await response.text();
+                let errMsg = "Failed to change password.";
+                try {
+                    const parsed = JSON.parse(text);
+                    if (parsed.message) errMsg = parsed.message;
+                } catch {}
+                throw new Error(errMsg);
+            }
+
+            setPasswordFeedback({ type: 'success', text: 'Password successfully changed!' });
+            setOldPassword("");
+            setNewPassword("");
+            setTimeout(() => setPasswordFeedback(null), 3000);
+        } catch (error: any) {
+            setPasswordFeedback({ type: 'error', text: error.message || 'Error changing password.' });
+        } finally {
+            setIsChangingPassword(false);
+        }
+    };
 
     useEffect(() => {
         if (currentUser) {
@@ -39,16 +87,18 @@ export default function EditProfileScreen({ navigation }: any) {
                 body: JSON.stringify({ name, email }),
             });
 
-            if (photoUri && !photoUri.startsWith('http')) {
+            if (!profileResponse.ok) {
+                const responseText = await profileResponse.text();
+                throw new Error(responseText || 'Could not update profile details.');
+            }
+
+            if (selectedPhoto) {
                 const formData = new FormData();
 
-                const uriParts = photoUri.split('.');
-                const fileType = uriParts[uriParts.length - 1];
-
                 formData.append('avatar', {
-                    uri: Platform.OS === 'ios' ? photoUri.replace('file://', '') : photoUri,
-                    name: `photo.${fileType}`,
-                    type: `image/${fileType}`,
+                    uri: selectedPhoto.uri,
+                    name: selectedPhoto.fileName || 'profile-image.jpg',
+                    type: selectedPhoto.type || 'image/jpeg',
                 } as any);
 
                 const uploadResponse = await fetch(`${API_BASE_URL}/users/avatar`, {
@@ -62,15 +112,19 @@ export default function EditProfileScreen({ navigation }: any) {
 
                 if (!uploadResponse.ok) {
                     const errText = await uploadResponse.text();
-                    console.error("Eroare la upload poză:", errText);
+                    throw new Error(errText || 'Could not upload profile picture.');
                 }
             }
 
             await refetchUser();
             navigation.goBack();
 
-        } catch (error) {
+        } catch (error: unknown) {
             console.error("Eroare la salvare:", error);
+            Alert.alert(
+                'Could not save profile',
+                error instanceof Error ? error.message : 'Please try again.',
+            );
         } finally {
             setIsSaving(false);
         }
@@ -86,7 +140,10 @@ export default function EditProfileScreen({ navigation }: any) {
         });
 
         if (!result.didCancel && result.assets && result.assets.length > 0) {
-            setPhotoUri(result.assets[0].uri || null);
+            const asset = result.assets[0];
+            if (asset.uri) {
+                setSelectedPhoto({ uri: asset.uri, fileName: asset.fileName, type: asset.type });
+            }
         }
     };
 
@@ -100,7 +157,10 @@ export default function EditProfileScreen({ navigation }: any) {
         });
 
         if (!result.didCancel && result.assets && result.assets.length > 0) {
-            setPhotoUri(result.assets[0].uri || null);
+            const asset = result.assets[0];
+            if (asset.uri) {
+                setSelectedPhoto({ uri: asset.uri, fileName: asset.fileName, type: asset.type });
+            }
         }
     };
 
@@ -131,14 +191,16 @@ export default function EditProfileScreen({ navigation }: any) {
 
                     <View style={styles.photoSection}>
                         <TouchableOpacity onPress={() => setIsPhotoModalVisible(true)} style={styles.avatarContainer} activeOpacity={0.7}>
-                            <Image
-                                source={photoUri ? { uri: photoUri } : require("../assets/logo.png")}
+                            <ProfileAvatar
+                                profilePictureUrl={currentUser.profile_picture_url}
+                                localUri={selectedPhoto?.uri}
+                                size={110}
                                 style={styles.avatar}
                             />
                             <View style={styles.cameraBadge}>
                                 <Camera color="white" size={16} />
                             </View>
-                        </TouchableOpacity>xw
+                        </TouchableOpacity>
                         <Text style={styles.tagText}>TAG: #{currentUser.tag}</Text>
                         <Text style={styles.tagSubtitle}>(The tag cannot be changed!)</Text>
                     </View>
@@ -178,6 +240,60 @@ export default function EditProfileScreen({ navigation }: any) {
                         disabled={isSaving || !name.trim() || !email.trim()}
                         style={styles.saveButton}
                     />
+
+                    <View style={styles.passwordSection}>
+                        <TouchableOpacity
+                            style={styles.toggleButton}
+                            onPress={() => setIsPasswordVisible(!isPasswordVisible)}
+                        >
+                            <Text style={styles.toggleButtonText}>
+                                {isPasswordVisible ? "CANCEL PASSWORD CHANGE" : "CHANGE PASSWORD"}
+                            </Text>
+                        </TouchableOpacity>
+
+                        {isPasswordVisible && (
+                            <View style={styles.passwordFormContainer}>
+                                <Text style={styles.inputLabel}>OLD PASSWORD</Text>
+                                <View style={styles.inputContainer}>
+                                    <Lock color="#A855F7" size={20} style={styles.inputIcon} />
+                                    <TextInput
+                                        style={styles.input}
+                                        value={oldPassword}
+                                        onChangeText={setOldPassword}
+                                        placeholder="Enter old password"
+                                        placeholderTextColor="#666"
+                                        secureTextEntry
+                                    />
+                                </View>
+
+                                <Text style={styles.inputLabel}>NEW PASSWORD</Text>
+                                <View style={styles.inputContainer}>
+                                    <Lock color="#A855F7" size={20} style={styles.inputIcon} />
+                                    <TextInput
+                                        style={styles.input}
+                                        value={newPassword}
+                                        onChangeText={setNewPassword}
+                                        placeholder="Enter new password"
+                                        placeholderTextColor="#666"
+                                        secureTextEntry
+                                    />
+                                </View>
+
+                                {passwordFeedback && (
+                                    <Text style={[styles.feedbackText, { color: passwordFeedback.type === 'success' ? '#10B981' : '#EF4444' }]}>
+                                        {passwordFeedback.text}
+                                    </Text>
+                                )}
+
+                                <ActionButton
+                                    title={isChangingPassword ? "CHANGING..." : "UPDATE PASSWORD"}
+                                    onPress={handleChangePassword}
+                                    disabled={isChangingPassword || !oldPassword.trim() || !newPassword.trim()}
+                                    style={styles.saveButton}
+                                />
+                            </View>
+                        )}
+                    </View>
 
                 </ScrollView>
             </KeyboardAvoidingView>
@@ -233,6 +349,12 @@ const styles = StyleSheet.create({
     inputIcon: { marginRight: 15 },
     input: { flex: 1, color: "white", fontSize: 16, paddingVertical: 15, fontWeight: "500" },
     saveButton: { width: "100%", marginTop: 10, paddingVertical: 15 },
+    passwordSection: { width: "100%", marginTop: 40, borderTopWidth: 1, borderTopColor: "#333", paddingTop: 30, marginBottom: 20 },
+    passwordFormContainer: { marginTop: 20 },
+    toggleButton: { backgroundColor: "#222", paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: "#444", alignItems: "center" },
+    toggleButtonText: { color: "white", fontSize: 14, fontWeight: "bold", letterSpacing: 1 },
+    sectionTitle: { color: "white", fontSize: 18, fontWeight: "900", letterSpacing: 1, marginBottom: 20, textAlign: "center" },
+    feedbackText: { textAlign: "center", fontSize: 14, fontWeight: "bold", marginBottom: 15 },
 
     modalOverlay: { flex: 1, backgroundColor: "rgba(0, 0, 0, 0.7)", justifyContent: "flex-end" },
     modalContent: { backgroundColor: "#111", borderTopLeftRadius: 25, borderTopRightRadius: 25, padding: 25, paddingBottom: 40, borderWidth: 1, borderColor: "#333" },

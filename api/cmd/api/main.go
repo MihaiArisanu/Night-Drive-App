@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -57,10 +58,30 @@ func main() {
 
 	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("./uploads"))))
 
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprintf(w, `{"error": "Route not found", "path": "%s"}`, r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"app":     "NightDrive API",
+			"version": "v1.0",
+			"status":  "online",
+			"message": "Engine is running.",
+		})
+	})
+
+	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/" {
+			handlers.RespondWithError(w, http.StatusNotFound, "not_found", "Route not found", nil)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"app":     "NightDrive API",
+			"version": "v1.0",
+			"status":  "online",
+			"message": "Engine is running. Drive safe! 🚗💨",
+		})
 	})
 
 	strictRateLimit := handlers.RateLimit(rdb, 5, time.Minute)
@@ -72,6 +93,8 @@ func main() {
 	mux.HandleFunc("/api/v1/events/nearby", handlers.GetNearbyEventsHandler(database))
 	mux.HandleFunc("/api/v1/users/search", handlers.RequireAuth(handlers.SearchUserHandler(database)))
 	mux.HandleFunc("/api/v1/users/me", handlers.RequireAuth(handlers.GetUserMeHandler(database)))
+	mux.HandleFunc("/api/v1/users/profile", handlers.RequireAuth(handlers.UpdateUserProfileHandler(database)))
+	mux.HandleFunc("/api/v1/users/password", handlers.RequireAuth(handlers.ChangePasswordHandler(database)))
 	mux.HandleFunc("/api/v1/users/feedback", handlers.RequireAuth(handlers.SubmitFeedbackHandler(database)))
 
 	mux.HandleFunc("/api/v1/users/location", handlers.RequireAuth(handlers.UpdateUserLocationHandler(rdb)))
@@ -99,14 +122,20 @@ func main() {
 	mux.HandleFunc("/api/v1/users/fcm", handlers.RequireAuth(handlers.UpdateFCMTokenHandler(database)))
 
 	mux.HandleFunc("/api/v1/groups/{id}/stop", handlers.RequireAuth(handlers.AddGroupStopHandler(database, hub)))
-	mux.HandleFunc("/api/v1/groups/invite", handlers.RequireAuth(handlers.InviteGroupHandler(hub)))
-	mux.HandleFunc("/api/v1/groups/{id}/join", handlers.RequireAuth(handlers.JoinGroupHandler()))
+	mux.HandleFunc("/api/v1/groups/invite", handlers.RequireAuth(handlers.InviteGroupHandler(database, hub, rdb)))
+	mux.HandleFunc("/api/v1/group-invites", handlers.RequireAuth(handlers.GetGroupInvitesHandler(rdb)))
+	mux.HandleFunc("/api/v1/group-invites/{id}", handlers.RequireAuth(handlers.DeleteGroupInviteHandler(rdb)))
+	mux.HandleFunc("/api/v1/groups/{id}/join", handlers.RequireAuth(handlers.JoinGroupHandler(rdb, hub)))
+	mux.HandleFunc("/api/v1/groups/{id}", handlers.RequireAuth(handlers.GetGroupDetailsHandler(database, rdb)))
 
 	mux.HandleFunc("/api/v1/ws", func(w http.ResponseWriter, r *http.Request) {
 		handlers.ServeWS(hub, w, r)
 	})
 
 	mux.HandleFunc("/api/v1/users/avatar", handlers.RequireAuth(handlers.UploadAvatarHandler(database, minioClient)))
+	mux.HandleFunc("/api/v1/avatars/{filename}", handlers.ServeAvatarHandler(minioClient))
+	// Compatibility for clients that cached the former MinIO-style /avatars URL.
+	mux.HandleFunc("/avatars/{filename}", handlers.ServeAvatarHandler(minioClient))
 
 	port := os.Getenv("PORT")
 	if port == "" {

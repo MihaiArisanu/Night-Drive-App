@@ -7,6 +7,7 @@ export interface FriendLocation {
     latitude: number;
     longitude: number;
     heading: number;
+    profile_picture_url?: string;
 }
 
 export function useNearbyFriends(userLat: number | null, userLng: number | null, isDNDActive: boolean, token: string | null) {
@@ -28,7 +29,7 @@ export function useNearbyFriends(userLat: number | null, userLng: number | null,
             if (data && Array.isArray(data)) {
                 setFriends(data);
             }
-        } catch (error) {
+        } catch {
         }
     }, [userLat, userLng, isDNDActive, token]);
 

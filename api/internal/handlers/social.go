@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -29,32 +30,48 @@ func SendFriendRequestHandler(database *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		err := db.SendFriendRequest(database, userID, payload.ReceiverTag)
-		if err != nil {
-			errStr := err.Error()
-			if strings.Contains(errStr, "not_found") {
-				w.WriteHeader(http.StatusNotFound)
-				json.NewEncoder(w).Encode(map[string]string{"message": "User not found"})
-				return
-			}
-			if strings.Contains(errStr, "self") {
-				w.WriteHeader(http.StatusConflict)
-				json.NewEncoder(w).Encode(map[string]string{"message": "Cannot send request to yourself"})
-				return
-			}
-			if strings.Contains(errStr, "already_friends") {
-				w.WriteHeader(http.StatusConflict)
-				json.NewEncoder(w).Encode(map[string]string{"message": "Already friends"})
-				return
-			}
+		payload.ReceiverTag = strings.TrimSpace(strings.TrimPrefix(payload.ReceiverTag, "#"))
+		if len(payload.ReceiverTag) < 4 {
+			RespondWithError(w, http.StatusBadRequest, "invalid_tag", "Invalid recipient TAG", nil)
+			return
+		}
 
-			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to send friend request", nil)
+		result, err := db.SendFriendRequest(r.Context(), database, userID, payload.ReceiverTag)
+		if err != nil {
+			switch {
+			case errors.Is(err, db.ErrUserNotFound):
+				RespondWithError(w, http.StatusNotFound, "user_not_found", "User not found", nil)
+			case errors.Is(err, db.ErrSelfRequest):
+				RespondWithError(w, http.StatusConflict, "self_request", "Cannot send request to yourself", nil)
+			case errors.Is(err, db.ErrAlreadyFriends):
+				RespondWithError(w, http.StatusConflict, "already_friends", "Already friends", nil)
+			case errors.Is(err, db.ErrRequestAlreadyPending):
+				RespondWithError(w, http.StatusConflict, "friend_request_pending", "Friend request already pending", nil)
+			case errors.Is(err, db.ErrIncomingRequestPending):
+				RespondWithError(w, http.StatusConflict, "incoming_friend_request_pending", "This driver already sent you a friend request", nil)
+			default:
+				RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to send friend request", err)
+			}
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]bool{"success": true})
+		statusCode := http.StatusCreated
+		if result.Status == "friendship_repaired" {
+			statusCode = http.StatusOK
+		}
+		w.WriteHeader(statusCode)
+		json.NewEncoder(w).Encode(struct {
+			Success   bool                          `json:"success"`
+			Status    string                        `json:"status"`
+			Name      string                        `json:"name"`
+			Recipient models.FriendRequestRecipient `json:"recipient"`
+		}{
+			Success:   true,
+			Status:    result.Status,
+			Name:      result.Recipient.Name,
+			Recipient: result.Recipient,
+		})
 	}
 }
 
@@ -71,7 +88,7 @@ func GetFriendRequestsHandler(database *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		reqs, err := db.GetPendingFriendRequests(database, userID)
+		reqs, err := db.GetPendingFriendRequests(r.Context(), database, userID)
 		if err != nil {
 			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to get friend requests", nil)
 			return
@@ -100,12 +117,12 @@ func RespondFriendRequestHandler(database *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		pathParts := strings.Split(r.URL.Path, "/")
-		if len(pathParts) < 5 {
-			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid path", nil)
+		requestID := r.PathValue("id")
+
+		if requestID == "" {
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid ID in URL", nil)
 			return
 		}
-		requestID := pathParts[4]
 
 		var actionReq models.FriendRequestAction
 		if err := json.NewDecoder(r.Body).Decode(&actionReq); err != nil {
@@ -118,17 +135,13 @@ func RespondFriendRequestHandler(database *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		err := db.RespondFriendRequest(database, requestID, userID, actionReq.Action)
+		err := db.RespondFriendRequest(r.Context(), database, requestID, userID, actionReq.Action)
 		if err != nil {
-			if strings.Contains(err.Error(), "not_found") {
-				RespondWithError(w, http.StatusNotFound, "api_error", "Request not found", nil)
+			if errors.Is(err, db.ErrRequestNotFound) {
+				RespondWithError(w, http.StatusNotFound, "friend_request_not_found", "Pending request not found", nil)
 				return
 			}
-			if strings.Contains(err.Error(), "already_answered") {
-				RespondWithError(w, http.StatusConflict, "api_error", "Request already answered", nil)
-				return
-			}
-			RespondWithError(w, http.StatusInternalServerError, "api_error", "Database error", nil)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Database error", err)
 			return
 		}
 
@@ -151,9 +164,9 @@ func GetAllFriendsHandler(database *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		friends, err := db.GetFriends(database, userID)
+		friends, err := db.GetFriends(r.Context(), database, userID)
 		if err != nil {
-			http.Error(w, "Failed to get friends: "+err.Error(), http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to get friends", err)
 			return
 		}
 

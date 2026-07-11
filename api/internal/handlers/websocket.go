@@ -35,18 +35,24 @@ var upgrader = websocket.Upgrader{
 }
 
 func ServeWS(hub *ws.Hub, w http.ResponseWriter, r *http.Request) {
+	var tokenString string
+
 	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
-		return
+	if authHeader != "" {
+		parts := strings.Split(authHeader, " ")
+		if len(parts) == 2 && parts[0] == "Bearer" {
+			tokenString = parts[1]
+		}
 	}
 
-	parts := strings.Split(authHeader, " ")
-	if len(parts) != 2 || parts[0] != "Bearer" {
+	if tokenString == "" {
+		tokenString = r.URL.Query().Get("token")
+	}
+
+	if tokenString == "" {
 		RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
 		return
 	}
-	tokenString := parts[1]
 
 	jwtKey := GetJWTKey()
 

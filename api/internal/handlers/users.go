@@ -333,10 +333,11 @@ func GetUserMeHandler(database *sql.DB) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"id":    user.ID,
-			"name":  user.Username,
-			"tag":   user.Tag,
-			"email": user.Email,
+			"id":                  user.ID,
+			"name":                user.Username,
+			"tag":                 user.Tag,
+			"email":               user.Email,
+			"profile_picture_url": user.ProfilePictureURL,
 		})
 	}
 }
@@ -516,5 +517,103 @@ func SubmitFeedbackHandler(database *sql.DB) http.HandlerFunc {
 
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]string{"message": "Feedback sent successfully."})
+	}
+}
+
+func UpdateUserProfileHandler(database *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
+			return
+		}
+
+		userID, ok := r.Context().Value(UserIDKey).(string)
+		if !ok || userID == "" {
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
+			return
+		}
+
+		var payload struct {
+			Name  string `json:"name"`
+			Email string `json:"email"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid request body", nil)
+			return
+		}
+
+		if payload.Name == "" || payload.Email == "" {
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Name and email cannot be empty", nil)
+			return
+		}
+
+		err := db.UpdateUserProfile(database, userID, payload.Name, payload.Email)
+		if err != nil {
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to update profile", err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]bool{"success": true})
+	}
+}
+
+func ChangePasswordHandler(database *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
+			return
+		}
+
+		userID, ok := r.Context().Value(UserIDKey).(string)
+		if !ok || userID == "" {
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
+			return
+		}
+
+		var payload struct {
+			OldPassword string `json:"old_password"`
+			NewPassword string `json:"new_password"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid request body", nil)
+			return
+		}
+
+		if payload.OldPassword == "" || payload.NewPassword == "" {
+			RespondWithError(w, http.StatusBadRequest, "bad_request", "Passwords cannot be empty", nil)
+			return
+		}
+
+		user, err := db.GetUserByID(database, userID)
+		if err != nil {
+			RespondWithError(w, http.StatusNotFound, "not_found", "User not found", nil)
+			return
+		}
+
+		err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(payload.OldPassword))
+		if err != nil {
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Incorrect old password", nil)
+			return
+		}
+
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(payload.NewPassword), bcrypt.DefaultCost)
+		if err != nil {
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to hash password", nil)
+			return
+		}
+
+		err = db.UpdateUserPassword(database, userID, string(hashedPassword))
+		if err != nil {
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to update password", nil)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]bool{"success": true})
 	}
 }

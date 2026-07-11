@@ -15,17 +15,19 @@ type LoginRequest struct {
 }
 
 type User struct {
-	ID           string    `json:"id"`
-	Username     string    `json:"username"`
-	Tag          string    `json:"tag"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"-"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID                string    `json:"id"`
+	Username          string    `json:"username"`
+	Tag               string    `json:"tag"`
+	Email             string    `json:"email"`
+	PasswordHash      string    `json:"-"`
+	ProfilePictureURL string    `json:"profile_picture_url,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 type NearbyUser struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID                string `json:"id"`
+	Name              string `json:"name"`
+	ProfilePictureURL string `json:"profile_picture_url,omitempty"`
 	Coordinates
 	Heading float64 `json:"heading"`
 }

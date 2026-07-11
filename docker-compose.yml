@@ -41,6 +41,9 @@ services:
       DB_PORT: 5432
       REDIS_URL: redis:6379
       ZEN_ENGINE_URL: http://zen-engine:8000
+      MINIO_ENDPOINT: minio:9000
+      MINIO_USER: ${MINIO_USER}
+      MINIO_PASSWORD: ${MINIO_PASSWORD}
     ports:
       - "8080:8080"
     volumes:
@@ -50,7 +53,8 @@ services:
     depends_on:
       - db
       - redis
-      - zen-engine 
+      - zen-engine
+      - minio
     restart: unless-stopped
 
   minio:

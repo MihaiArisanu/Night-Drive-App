@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { apiFetch } from './useCurrentUser';
+import { apiFetch } from '../services/api';
+import { useSettingsStore } from '../store/useSettingsStore';
 
 export function useRideInvite() {
     const [isInviting, setIsInviting] = useState(false);
@@ -7,6 +8,7 @@ export function useRideInvite() {
     const sendInvite = async (targetUserId: string, myName: string, myLat: number, myLng: number) => {
         setIsInviting(true);
         try {
+            const { activeGroupId, draftGroupId, setDraftGroupId } = useSettingsStore.getState();
             const data = await apiFetch(`/groups/invite`, {
                 method: 'POST',
                 body: JSON.stringify({
@@ -14,8 +16,13 @@ export function useRideInvite() {
                     senderName: myName,
                     senderLat: myLat,
                     senderLng: myLng,
+                    groupId: activeGroupId || draftGroupId || undefined,
                 }),
             });
+
+            if (!activeGroupId && data.groupId) {
+                setDraftGroupId(data.groupId);
+            }
 
             return { success: true, groupId: data.groupId };
         } catch (error) {

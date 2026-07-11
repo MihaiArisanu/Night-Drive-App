@@ -4,10 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
-	"os"
+	"net/url"
+	"path"
+	"regexp"
+	"strings"
+	"time"
 
 	"github.com/MihaiArisanu/nightdrive-backend/internal/db"
 	"github.com/google/uuid"
@@ -15,6 +21,65 @@ import (
 )
 
 const maxUploadSize = 5 * 1024 * 1024
+const avatarBucketName = "avatars"
+
+var avatarFileNamePattern = regexp.MustCompile(`^[0-9a-fA-F-]{36}\.(jpg|png|webp)$`)
+
+func avatarObjectName(avatarURL string) (string, bool) {
+	parsedURL, err := url.Parse(avatarURL)
+	if err != nil {
+		return "", false
+	}
+	markerIndex := strings.LastIndex(parsedURL.Path, "/avatars/")
+	if markerIndex < 0 {
+		return "", false
+	}
+	fileName := path.Base(parsedURL.Path[markerIndex+len("/avatars/"):])
+	return fileName, avatarFileNamePattern.MatchString(fileName)
+}
+
+func ServeAvatarHandler(minioClient *minio.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
+			return
+		}
+
+		fileName := r.PathValue("filename")
+		if !avatarFileNamePattern.MatchString(fileName) {
+			RespondWithError(w, http.StatusNotFound, "avatar_not_found", "Avatar not found", nil)
+			return
+		}
+
+		object, err := minioClient.GetObject(r.Context(), avatarBucketName, fileName, minio.GetObjectOptions{})
+		if err != nil {
+			RespondWithError(w, http.StatusBadGateway, "storage_unavailable", "Avatar storage unavailable", err)
+			return
+		}
+		defer object.Close()
+
+		info, err := object.Stat()
+		if err != nil {
+			response := minio.ToErrorResponse(err)
+			if response.Code == "NoSuchKey" || response.Code == "NoSuchObject" || response.StatusCode == http.StatusNotFound {
+				RespondWithError(w, http.StatusNotFound, "avatar_not_found", "Avatar not found", nil)
+				return
+			}
+			RespondWithError(w, http.StatusBadGateway, "storage_unavailable", "Avatar storage unavailable", err)
+			return
+		}
+
+		if info.ContentType != "" {
+			w.Header().Set("Content-Type", info.ContentType)
+		}
+		if info.ETag != "" {
+			w.Header().Set("ETag", `"`+info.ETag+`"`)
+		}
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		http.ServeContent(w, r, fileName, info.LastModified, object)
+	}
+}
 
 func UploadAvatarHandler(database *sql.DB, minioClient *minio.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -29,28 +94,33 @@ func UploadAvatarHandler(database *sql.DB, minioClient *minio.Client) http.Handl
 			return
 		}
 
-		r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+		r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize+(1024*1024))
 		if err := r.ParseMultipartForm(maxUploadSize); err != nil {
-			RespondWithError(w, http.StatusBadRequest, "api_error", "Fișierul este prea mare (Max 5MB)", nil)
+			RespondWithError(w, http.StatusBadRequest, "invalid_avatar", "Invalid avatar upload", err)
 			return
 		}
 
-		file, handler, err := r.FormFile("avatar")
+		file, fileHeader, err := r.FormFile("avatar")
 		if err != nil {
-			RespondWithError(w, http.StatusBadRequest, "api_error", "Eroare la preluarea fișierului", nil)
+			RespondWithError(w, http.StatusBadRequest, "invalid_avatar", "Avatar file is required", nil)
 			return
 		}
 		defer file.Close()
-
-		buff := make([]byte, 512)
-		if _, err = file.Read(buff); err != nil {
-			RespondWithError(w, http.StatusInternalServerError, "api_error", "Eroare la citirea fișierului", nil)
+		if fileHeader.Size <= 0 || fileHeader.Size > maxUploadSize {
+			RespondWithError(w, http.StatusRequestEntityTooLarge, "avatar_too_large", "Avatar must be smaller than 5MB", nil)
 			return
 		}
 
-		filetype := http.DetectContentType(buff)
+		buff := make([]byte, 512)
+		bytesRead, readErr := io.ReadFull(file, buff)
+		if readErr != nil && !errors.Is(readErr, io.ErrUnexpectedEOF) && !errors.Is(readErr, io.EOF) {
+			RespondWithError(w, http.StatusBadRequest, "invalid_avatar", "Could not read avatar file", readErr)
+			return
+		}
+
+		filetype := http.DetectContentType(buff[:bytesRead])
 		if filetype != "image/jpeg" && filetype != "image/png" && filetype != "image/webp" {
-			RespondWithError(w, http.StatusBadRequest, "api_error", "Sunt permise doar imagini (JPEG, PNG, WEBP)", nil)
+			RespondWithError(w, http.StatusUnsupportedMediaType, "unsupported_avatar_type", "Only JPEG, PNG and WEBP images are allowed", nil)
 			return
 		}
 
@@ -71,33 +141,38 @@ func UploadAvatarHandler(database *sql.DB, minioClient *minio.Client) http.Handl
 			ext = ".png"
 		}
 		newFileName := fmt.Sprintf("%s%s", uuid.New().String(), ext)
-		bucketName := "avatars"
 		ctx := r.Context()
 
-		_, err = minioClient.PutObject(ctx, bucketName, newFileName, file, handler.Size, minio.PutObjectOptions{
+		_, err = minioClient.PutObject(ctx, avatarBucketName, newFileName, file, fileHeader.Size, minio.PutObjectOptions{
 			ContentType: filetype,
 		})
 		if err != nil {
-			RespondWithError(w, http.StatusInternalServerError, "api_error", "Eroare la salvarea fișierului în Object Storage", nil)
+			RespondWithError(w, http.StatusBadGateway, "storage_unavailable", "Could not store avatar", err)
 			return
 		}
 
-		baseURL := os.Getenv("MINIO_PUBLIC_URL")
-		if baseURL == "" {
-			baseURL = "http://localhost:9000"
-		}
-		avatarURL := fmt.Sprintf("%s/%s/%s", baseURL, bucketName, newFileName)
+		avatarURL := fmt.Sprintf("/api/v1/avatars/%s", newFileName)
 
-		if err := db.UpdateAvatar(database, userID, avatarURL); err != nil {
-			minioClient.RemoveObject(context.Background(), bucketName, newFileName, minio.RemoveObjectOptions{})
-			RespondWithError(w, http.StatusInternalServerError, "api_error", "Eroare la salvarea în baza de date", nil)
+		previousAvatarURL, err := db.ReplaceAvatar(ctx, database, userID, avatarURL)
+		if err != nil {
+			minioClient.RemoveObject(context.Background(), avatarBucketName, newFileName, minio.RemoveObjectOptions{})
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Could not update profile avatar", err)
 			return
+		}
+
+		if previousObjectName, ok := avatarObjectName(previousAvatarURL); ok && previousObjectName != newFileName {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := minioClient.RemoveObject(cleanupCtx, avatarBucketName, previousObjectName, minio.RemoveObjectOptions{}); err != nil {
+				log.Printf("[WARN] Could not remove previous avatar %s: %v", previousObjectName, err)
+			}
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
-			"message":    "Avatar actualizat cu succes",
-			"avatar_url": avatarURL,
+			"message":             "Avatar updated successfully",
+			"avatar_url":          avatarURL,
+			"profile_picture_url": avatarURL,
 		})
 	}
 }

@@ -6,6 +6,7 @@ export interface CurrentUser {
     name: string;
     tag: string;
     email: string;
+    profile_picture_url?: string;
 }
 
 export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
@@ -27,13 +28,13 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
         try {
             const parsed = JSON.parse(text);
             if (parsed.message) errorMessage = parsed.message;
-        } catch (e) { }
+        } catch { }
         throw new Error(`API Error ${response.status}: ${errorMessage}`);
     }
 
     try {
         return JSON.parse(text);
-    } catch (e) {
+    } catch {
         throw new Error(`JSON Parse error on 200 OK. Raw text: "${text}"`);
     }
 };
@@ -49,7 +50,8 @@ export const useCurrentUser = () => {
             setCurrentUser({
                 name: data.name,
                 tag: data.tag,
-                email: data.email
+                email: data.email,
+                profile_picture_url: data.profile_picture_url
             });
             useSettingsStore.getState().setUserName(data.name);
             useSettingsStore.getState().setUserId(data.id);

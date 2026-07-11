@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from "react";
 import { View, Text, TouchableOpacity, Keyboard, Platform, PermissionsAndroid, StyleSheet, Modal, Animated, PanResponder, Alert } from "react-native";
 import MapView, { PROVIDER_GOOGLE, Marker, Circle, Polyline } from "react-native-maps";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Search, MapPin, Navigation, Users, LocateFixed, Map, XCircle, Mic } from "lucide-react-native";
 import Geolocation from "react-native-geolocation-service";
 import MapViewDirections from 'react-native-maps-directions';
 import Tts from 'react-native-tts';
 import { useKeepAwake } from '@sayem314/react-native-keep-awake';
+import Toast from 'react-native-toast-message';
 
 import { AddEventButton } from "../components/AddEventButton";
 import { AddEventModal } from "../components/AddEventModal";
@@ -26,7 +27,7 @@ import { useReporting } from '../hooks/useReporting';
 import { useNearbyEvents } from '../hooks/useNearbyEvents';
 import { useNearbyFriends } from '../hooks/useNearbyFriends';
 import { useRideInvite } from '../hooks/useRideInvite';
-import { useWebSocket, useGroupStopListener } from '../hooks/useWebSocket';
+import { useWebSocket } from '../hooks/useWebSocket';
 import { useLocationBroadcaster } from '../hooks/useLocationBroadcaster';
 import { useDislikedAreas } from '../hooks/useDislikedAreas';
 import { useTelemetry } from '../hooks/useTelemetry';
@@ -41,6 +42,8 @@ const GOOGLE_API_KEY = GOOGLE_API_GENERAL_KEY;
 const globalNotifiedFriends = new Set<string>();
 
 interface InviteData {
+  inviteId?: string;
+  senderId?: string;
   friendName?: string;
   senderName?: string;
   distance: string;
@@ -53,6 +56,7 @@ interface InviteData {
 }
 
 export default function MainScreen() {
+  const insets = useSafeAreaInsets();
   const mapRef = useRef<MapView>(null);
 
   const { speed, heading, coords } = useLocation();
@@ -80,7 +84,7 @@ export default function MainScreen() {
   const [showRideInvite, setShowRideInvite] = useState(false);
   const [inviteData, setInviteData] = useState<InviteData | null>(null);
 
-  const { isDNDActive, userId, userName, activeGroupId, groupDestination, rendezvousPoint, groupStop, setActiveGroupId, token, setGroupDestination, setGroupStop } = useSettingsStore();
+  const { isDNDActive, userId, userName, activeGroupId, groupDestination, rendezvousPoint, groupStop, setActiveGroupId, token, setGroupDestination, setGroupStop, removePendingGroupInvite } = useSettingsStore();
   const { submitReport, isSubmitting } = useReporting();
   const { events, refetchEvents } = useNearbyEvents(activeCoords.latitude || 44.4268, activeCoords.longitude || 26.1025);
   const { friends } = useNearbyFriends(activeCoords.latitude, activeCoords.longitude, isDNDActive, token);
@@ -158,9 +162,7 @@ export default function MainScreen() {
     setShowRideInvite(true);
   };
 
-  const { ws } = useWebSocket(token, activeGroupId, handleIncomingInvite, () => { });
-
-  useGroupStopListener(ws);
+  useWebSocket(token, activeGroupId, handleIncomingInvite, () => { });
 
   useLocationBroadcaster(
     userId,
@@ -188,10 +190,7 @@ export default function MainScreen() {
       try {
         const result = await sendInvite(inviteData.friendId, userName, activeCoords.latitude, activeCoords.longitude);
         if (result.success && result.groupId) {
-          setActiveGroupId(result.groupId);
-          if (!currentDestination && !isZenSession) {
-            toggleZenSession();
-          }
+          Toast.show({ type: 'info', text1: 'Invite sent', text2: 'The Group Ride starts after acceptance.' });
         }
       } catch (err) {
         console.error("Failed to invite local friend:", err);
@@ -209,6 +208,7 @@ export default function MainScreen() {
       const groupData = await apiFetch(`/groups/${inviteData.groupId}/join`, { method: 'POST' });
 
       setActiveGroupId(inviteData.groupId);
+      removePendingGroupInvite(inviteData.inviteId || inviteData.groupId);
       setShowRideInvite(false);
 
       if (groupData.destination) {
@@ -244,8 +244,8 @@ export default function MainScreen() {
       return;
     }
     const result = await sendInvite(friendId, userName, activeCoords.latitude, activeCoords.longitude);
-    if (result.success && result.groupId) {
-      setActiveGroupId(result.groupId);
+    if (result.success) {
+      Toast.show({ type: 'info', text1: 'Invite sent', text2: 'Waiting for your friend to accept.' });
     }
   };
 
@@ -325,7 +325,7 @@ export default function MainScreen() {
       mapRef.current.animateCamera({
         center: activeCoords,
         heading: isDriving ? heading : 0,
-        pitch: isDriving || isNavigating || isZenSession ? 60 : 0,
+        pitch: 0,
         zoom: isDriving || isNavigating || isZenSession ? 20.5 : 18.5,
       }, { duration: 1000 });
     }
@@ -435,7 +435,7 @@ export default function MainScreen() {
       mapRef.current.animateCamera({
         center: activeCoords,
         heading: heading,
-        pitch: 60,
+        pitch: 0,
         zoom: 20.5,
       }, { duration: 1000 });
     }
@@ -703,7 +703,12 @@ export default function MainScreen() {
           )}
 
           <Animated.View
-            style={[styles.bottomSection, { transform: [{ translateY: panY }] }]}
+            style={
+              [styles.bottomSection,
+              {
+                transform: [{ translateY: panY }],
+                paddingBottom: Math.max(insets.bottom, 20)
+              }]}
             {...(isNavigating ? panResponder.panHandlers : {})}
           >
             {isNavigating && <View style={styles.dragHandle} />}
