@@ -29,12 +29,42 @@ export default function EditProfileScreen({ navigation }: any) {
 
     const [oldPassword, setOldPassword] = useState("");
     const [newPassword, setNewPassword] = useState("");
+    const [confirmPassword, setConfirmPassword] = useState("");
     const [isChangingPassword, setIsChangingPassword] = useState(false);
-    const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+    const [isPasswordFormVisible, setIsPasswordFormVisible] = useState(false);
     const [passwordFeedback, setPasswordFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+    const newPasswordLength = Array.from(newPassword).length;
+    const isPasswordLongEnough = newPasswordLength >= 8;
+    const doPasswordsMatch = newPassword === confirmPassword;
+
+    const resetPasswordForm = () => {
+        setOldPassword("");
+        setNewPassword("");
+        setConfirmPassword("");
+        setPasswordFeedback(null);
+    };
+
+    const togglePasswordForm = () => {
+        if (isPasswordFormVisible) {
+            resetPasswordForm();
+        }
+        setIsPasswordFormVisible((visible) => !visible);
+    };
+
     const handleChangePassword = async () => {
-        if (!oldPassword.trim() || !newPassword.trim()) return;
+        if (!oldPassword || !newPassword || !confirmPassword) {
+            setPasswordFeedback({ type: 'error', text: 'Complete all password fields.' });
+            return;
+        }
+        if (!isPasswordLongEnough) {
+            setPasswordFeedback({ type: 'error', text: 'The new password must contain at least 8 characters.' });
+            return;
+        }
+        if (!doPasswordsMatch) {
+            setPasswordFeedback({ type: 'error', text: 'The new passwords do not match.' });
+            return;
+        }
         setIsChangingPassword(true);
         setPasswordFeedback(null);
         try {
@@ -60,9 +90,11 @@ export default function EditProfileScreen({ navigation }: any) {
             setPasswordFeedback({ type: 'success', text: 'Password successfully changed!' });
             setOldPassword("");
             setNewPassword("");
+            setConfirmPassword("");
             setTimeout(() => setPasswordFeedback(null), 3000);
-        } catch (error: any) {
-            setPasswordFeedback({ type: 'error', text: error.message || 'Error changing password.' });
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : 'Error changing password.';
+            setPasswordFeedback({ type: 'error', text: message });
         } finally {
             setIsChangingPassword(false);
         }
@@ -234,25 +266,24 @@ export default function EditProfileScreen({ navigation }: any) {
                         </View>
                     </View>
 
-                    <ActionButton
-                        title={isSaving ? "SAVING..." : "SAVE CHANGES"}
-                        onPress={handleSave}
-                        disabled={isSaving || !name.trim() || !email.trim()}
-                        style={styles.saveButton}
-                    />
-
                     <View style={styles.passwordSection}>
                         <TouchableOpacity
                             style={styles.toggleButton}
-                            onPress={() => setIsPasswordVisible(!isPasswordVisible)}
+                            onPress={togglePasswordForm}
+                            activeOpacity={0.8}
                         >
+                            <Lock color="#A855F7" size={19} />
                             <Text style={styles.toggleButtonText}>
-                                {isPasswordVisible ? "CANCEL PASSWORD CHANGE" : "CHANGE PASSWORD"}
+                                {isPasswordFormVisible ? "CANCEL PASSWORD CHANGE" : "CHANGE PASSWORD"}
                             </Text>
                         </TouchableOpacity>
 
-                        {isPasswordVisible && (
+                        {isPasswordFormVisible && (
                             <View style={styles.passwordFormContainer}>
+                                <Text style={styles.passwordDescription}>
+                                    Choose a new password containing at least 8 characters.
+                                </Text>
+
                                 <Text style={styles.inputLabel}>OLD PASSWORD</Text>
                                 <View style={styles.inputContainer}>
                                     <Lock color="#A855F7" size={20} style={styles.inputIcon} />
@@ -263,6 +294,9 @@ export default function EditProfileScreen({ navigation }: any) {
                                         placeholder="Enter old password"
                                         placeholderTextColor="#666"
                                         secureTextEntry
+                                        autoCapitalize="none"
+                                        autoCorrect={false}
+                                        textContentType="password"
                                     />
                                 </View>
 
@@ -276,11 +310,52 @@ export default function EditProfileScreen({ navigation }: any) {
                                         placeholder="Enter new password"
                                         placeholderTextColor="#666"
                                         secureTextEntry
+                                        autoCapitalize="none"
+                                        autoCorrect={false}
+                                        textContentType="newPassword"
+                                        maxLength={72}
                                     />
                                 </View>
 
+                                <Text style={styles.inputLabel}>CONFIRM NEW PASSWORD</Text>
+                                <View style={styles.inputContainer}>
+                                    <Lock color="#A855F7" size={20} style={styles.inputIcon} />
+                                    <TextInput
+                                        style={styles.input}
+                                        value={confirmPassword}
+                                        onChangeText={setConfirmPassword}
+                                        placeholder="Repeat new password"
+                                        placeholderTextColor="#666"
+                                        secureTextEntry
+                                        autoCapitalize="none"
+                                        autoCorrect={false}
+                                        textContentType="newPassword"
+                                        maxLength={72}
+                                    />
+                                </View>
+
+                                <View style={styles.passwordRules}>
+                                    <Text style={[
+                                        styles.passwordRuleText,
+                                        newPassword.length > 0 && (isPasswordLongEnough ? styles.ruleValid : styles.ruleInvalid),
+                                    ]}>
+                                        {isPasswordLongEnough ? '✓' : '•'} At least 8 characters
+                                    </Text>
+                                    {confirmPassword.length > 0 && (
+                                        <Text style={[
+                                            styles.passwordRuleText,
+                                            doPasswordsMatch ? styles.ruleValid : styles.ruleInvalid,
+                                        ]}>
+                                            {doPasswordsMatch ? '✓ Passwords match' : '• Passwords do not match'}
+                                        </Text>
+                                    )}
+                                </View>
+
                                 {passwordFeedback && (
-                                    <Text style={[styles.feedbackText, { color: passwordFeedback.type === 'success' ? '#10B981' : '#EF4444' }]}>
+                                    <Text style={[
+                                        styles.feedbackText,
+                                        passwordFeedback.type === 'success' ? styles.feedbackSuccess : styles.feedbackError,
+                                    ]}>
                                         {passwordFeedback.text}
                                     </Text>
                                 )}
@@ -288,12 +363,26 @@ export default function EditProfileScreen({ navigation }: any) {
                                 <ActionButton
                                     title={isChangingPassword ? "CHANGING..." : "UPDATE PASSWORD"}
                                     onPress={handleChangePassword}
-                                    disabled={isChangingPassword || !oldPassword.trim() || !newPassword.trim()}
-                                    style={styles.saveButton}
+                                    disabled={
+                                        isChangingPassword ||
+                                        !oldPassword ||
+                                        !newPassword ||
+                                        !confirmPassword ||
+                                        !isPasswordLongEnough ||
+                                        !doPasswordsMatch
+                                    }
+                                    style={styles.passwordUpdateButton}
                                 />
                             </View>
                         )}
                     </View>
+
+                    <ActionButton
+                        title={isSaving ? "SAVING..." : "SAVE CHANGES"}
+                        onPress={handleSave}
+                        disabled={isSaving || !name.trim() || !email.trim()}
+                        style={styles.saveButton}
+                    />
 
                 </ScrollView>
             </KeyboardAvoidingView>
@@ -349,12 +438,20 @@ const styles = StyleSheet.create({
     inputIcon: { marginRight: 15 },
     input: { flex: 1, color: "white", fontSize: 16, paddingVertical: 15, fontWeight: "500" },
     saveButton: { width: "100%", marginTop: 10, paddingVertical: 15 },
-    passwordSection: { width: "100%", marginTop: 40, borderTopWidth: 1, borderTopColor: "#333", paddingTop: 30, marginBottom: 20 },
-    passwordFormContainer: { marginTop: 20 },
-    toggleButton: { backgroundColor: "#222", paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: "#444", alignItems: "center" },
+    passwordSection: { width: "100%", marginBottom: 20 },
+    passwordFormContainer: { marginTop: 12, backgroundColor: "#080808", borderRadius: 14, borderWidth: 1, borderColor: "#242424", padding: 16 },
+    passwordDescription: { color: "#888", fontSize: 13, lineHeight: 19, marginBottom: 20 },
+    toggleButton: { flexDirection: "row", justifyContent: "center", gap: 10, backgroundColor: "#0A0A0A", paddingVertical: 15, borderRadius: 12, borderWidth: 1, borderColor: "#A855F7", alignItems: "center" },
     toggleButtonText: { color: "white", fontSize: 14, fontWeight: "bold", letterSpacing: 1 },
     sectionTitle: { color: "white", fontSize: 18, fontWeight: "900", letterSpacing: 1, marginBottom: 20, textAlign: "center" },
     feedbackText: { textAlign: "center", fontSize: 14, fontWeight: "bold", marginBottom: 15 },
+    feedbackSuccess: { color: "#10B981" },
+    feedbackError: { color: "#EF4444" },
+    passwordRules: { marginTop: -5, marginBottom: 18, gap: 5 },
+    passwordRuleText: { color: "#71717A", fontSize: 12, fontWeight: "600" },
+    ruleValid: { color: "#10B981" },
+    ruleInvalid: { color: "#EF4444" },
+    passwordUpdateButton: { width: "100%", marginTop: 5, paddingVertical: 15 },
 
     modalOverlay: { flex: 1, backgroundColor: "rgba(0, 0, 0, 0.7)", justifyContent: "flex-end" },
     modalContent: { backgroundColor: "#111", borderTopLeftRadius: 25, borderTopRightRadius: 25, padding: 25, paddingBottom: 40, borderWidth: 1, borderColor: "#333" },

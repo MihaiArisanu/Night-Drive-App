@@ -34,6 +34,7 @@ import { useTelemetry } from '../hooks/useTelemetry';
 import { useActiveRouteSync } from '../hooks/useActiveRouteSync';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { useZenSessionSync } from '../hooks/useZenSessionSync';
+import { useGroupVoice } from '../hooks/useGroupVoice';
 
 import { useSettingsStore } from '../store/useSettingsStore';
 
@@ -87,8 +88,13 @@ export default function MainScreen() {
   const { isDNDActive, userId, userName, activeGroupId, groupDestination, rendezvousPoint, groupStop, setActiveGroupId, token, setGroupDestination, setGroupStop, removePendingGroupInvite } = useSettingsStore();
   const { submitReport, isSubmitting } = useReporting();
   const { events, refetchEvents } = useNearbyEvents(activeCoords.latitude || 44.4268, activeCoords.longitude || 26.1025);
-  const { friends } = useNearbyFriends(activeCoords.latitude, activeCoords.longitude, isDNDActive, token);
+  const { friends } = useNearbyFriends(activeCoords.latitude, activeCoords.longitude, token, activeGroupId);
   const { sendInvite } = useRideInvite();
+  const {
+    isConnected: isGroupVoiceConnected,
+    isTransmitting: isGroupVoiceTransmitting,
+    toggleTransmission,
+  } = useGroupVoice(activeGroupId);
 
   const { dislikedAreas, addDislike } = useDislikedAreas();
 
@@ -162,7 +168,33 @@ export default function MainScreen() {
     setShowRideInvite(true);
   };
 
-  useWebSocket(token, activeGroupId, handleIncomingInvite, () => { });
+  useWebSocket(token, activeGroupId, handleIncomingInvite);
+
+  const handleGroupVoicePress = async () => {
+    const result = await toggleTransmission();
+    if (result === 'permission_denied') {
+      Alert.alert(
+        'Microphone permission required',
+        'Allow microphone access to send live voice messages to your group.',
+      );
+      return;
+    }
+    if (result === 'not_ready') {
+      Toast.show({
+        type: 'info',
+        text1: 'Group voice is connecting',
+        text2: 'Please try again in a few seconds.',
+      });
+      return;
+    }
+    if (result === 'failed') {
+      Toast.show({
+        type: 'error',
+        text1: 'Voice message failed',
+        text2: 'Check your connection and try again.',
+      });
+    }
+  };
 
   useLocationBroadcaster(
     userId,
@@ -693,6 +725,29 @@ export default function MainScreen() {
         </View>
       </Modal>
 
+      {activeGroupId && !isSearching && (
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel={isGroupVoiceTransmitting ? 'Stop group voice message' : 'Start group voice message'}
+          accessibilityHint="Tap once to start. It stops automatically after ten seconds, or tap again to stop early."
+          accessibilityState={{
+            busy: !isGroupVoiceConnected,
+            selected: isGroupVoiceTransmitting,
+          }}
+          activeOpacity={0.8}
+          touchSoundDisabled={false}
+          onPress={handleGroupVoicePress}
+          style={[
+            styles.groupVoiceButton,
+            !isGroupVoiceConnected && styles.groupVoiceButtonConnecting,
+            isGroupVoiceTransmitting && styles.groupVoiceButtonTransmitting,
+            { bottom: Math.max(insets.bottom, 20) + 112 },
+          ]}
+        >
+          <Mic color="#FFF" size={29} strokeWidth={2.5} />
+        </TouchableOpacity>
+      )}
+
       {!isSearching && (
         <View style={styles.bottomWrapper}>
           {isNavigating && (
@@ -866,6 +921,35 @@ const styles = StyleSheet.create({
     bottom: 0,
     width: '100%',
     zIndex: 5,
+  },
+  groupVoiceButton: {
+    position: 'absolute',
+    left: 22,
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#8A2BE2',
+    borderWidth: 2,
+    borderColor: '#B76CFF',
+    shadowColor: '#8A2BE2',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.45,
+    shadowRadius: 8,
+    elevation: 10,
+    zIndex: 8,
+  },
+  groupVoiceButtonConnecting: {
+    backgroundColor: '#3F3F46',
+    borderColor: '#71717A',
+    shadowOpacity: 0.15,
+  },
+  groupVoiceButtonTransmitting: {
+    backgroundColor: '#EF4444',
+    borderColor: '#FCA5A5',
+    shadowColor: '#EF4444',
+    shadowOpacity: 0.65,
   },
   cancelBackground: {
     ...StyleSheet.absoluteFillObject,

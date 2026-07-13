@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { apiFetch, AuthStorage } from '../services/api';
+import { ApiError, apiFetch, AuthStorage } from '../services/api';
 import { useSettingsStore } from '../store/useSettingsStore';
 
 const generateHexTag = (): string => {
@@ -38,6 +38,7 @@ export default function AuthScreen({ route, navigation }: any) {
                 const data = await apiFetch('/login', {
                     method: 'POST',
                     body: JSON.stringify({ email: email.trim(), password }),
+                    skipAuthentication: true,
                 });
 
                 await AuthStorage.saveTokens(data.access_token, data.refresh_token);
@@ -54,6 +55,7 @@ export default function AuthScreen({ route, navigation }: any) {
                         email: email.trim(),
                         password
                     }),
+                    skipAuthentication: true,
                 });
 
                 Alert.alert('Success!', `Account created with tag #${tag}. You can now log in.`);
@@ -62,7 +64,8 @@ export default function AuthScreen({ route, navigation }: any) {
                 setUsername('');
             }
         } catch (error: unknown) {
-            let errorMsg = "An unknown error occurred.";
+            let alertTitle = 'Authentication Error';
+            let errorMsg = 'Something went wrong. Please try again.';
             if (error instanceof Error) {
                 errorMsg = error.message;
             } else if (typeof error === 'string') {
@@ -72,25 +75,25 @@ export default function AuthScreen({ route, navigation }: any) {
             const lowerError = errorMsg.toLowerCase();
 
             if (lowerError.includes('network request failed') || lowerError.includes('fetch failed')) {
-                errorMsg = "Network request failed. Please check your connection.";
+                alertTitle = 'Connection problem';
+                errorMsg = 'Could not reach NightDrive. Check your internet connection and try again.';
             }
-
             else if (isLogin) {
-                if (lowerError.includes('password') || lowerError.includes('credential') || lowerError.includes('invalid')) {
-                    errorMsg = "Password wrong";
+                if ((error instanceof ApiError && error.status === 401) || lowerError.includes('credential')) {
+                    alertTitle = "Couldn't log in";
+                    errorMsg = 'The email or password is incorrect. Please try again.';
                 }
-                else if (lowerError.includes('not found') || lowerError.includes('exist') || lowerError.includes('no user') || lowerError.includes('no rows')) {
-                    errorMsg = "This email does not exist in the Night Drive Database.";
+                else if (error instanceof ApiError && error.code === 'validation_failed') {
+                    errorMsg = 'Enter a valid email address and password.';
                 }
             }
-
             else if (!isLogin) {
                 if (lowerError.includes('exist') || lowerError.includes('duplicate') || lowerError.includes('already') || lowerError.includes('unique')) {
                     errorMsg = "This email is already registered. Please log in.";
                 }
             }
 
-            Alert.alert('Authentication Error', errorMsg);
+            Alert.alert(alertTitle, errorMsg);
         } finally {
             setIsLoading(false);
         }
@@ -107,6 +110,7 @@ export default function AuthScreen({ route, navigation }: any) {
             await apiFetch('/auth/forgot-password', {
                 method: 'POST',
                 body: JSON.stringify({ email: email.trim() }),
+                skipAuthentication: true,
             });
             Alert.alert('Success', 'If that email exists, a temporary password has been sent. Please check your inbox.');
         } catch (error: any) {

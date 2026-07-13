@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { apiFetch } from '../services/api';
+import { ApiError, apiFetch } from '../services/api';
 
 export interface Friend {
     id: string;
@@ -38,6 +38,10 @@ interface SendFriendRequestResponse {
 }
 
 const readApiError = (error: unknown): { code: string; message: string } => {
+    if (error instanceof ApiError) {
+        return { code: error.code, message: error.message };
+    }
+
     const rawMessage = error instanceof Error ? error.message : String(error);
     try {
         const parsed = JSON.parse(rawMessage) as { error?: string; message?: string };

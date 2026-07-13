@@ -50,6 +50,7 @@ interface SettingsState {
     setRendezvousPoint: (value: LocationPoint | null) => void;
     setGroupStop: (value: LocationPoint | null) => void;
     setGroupRoutePolyline: (polyline: string | null) => void;
+    clearGroupState: () => void;
 
     clearSettings: () => void;
 }
@@ -93,6 +94,15 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     setRendezvousPoint: (value) => set({ rendezvousPoint: value }),
     setGroupStop: (value) => set({ groupStop: value }),
     setGroupRoutePolyline: (value) => set({ groupRoutePolyline: value }),
+    clearGroupState: () => set({
+        activeGroupId: null,
+        draftGroupId: null,
+        groupMembers: [],
+        groupDestination: null,
+        rendezvousPoint: null,
+        groupStop: null,
+        groupRoutePolyline: null,
+    }),
 
     clearSettings: () => set({
         userId: null, userName: null, token: null, activeGroupId: null, draftGroupId: null,

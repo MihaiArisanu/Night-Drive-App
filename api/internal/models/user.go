@@ -31,3 +31,11 @@ type NearbyUser struct {
 	Coordinates
 	Heading float64 `json:"heading"`
 }
+
+type LiveLocation struct {
+	Coordinates
+	Heading   float64 `json:"heading"`
+	Speed     float64 `json:"speed"`
+	IsDND     bool    `json:"isDnd"`
+	Timestamp int64   `json:"timestamp"`
+}

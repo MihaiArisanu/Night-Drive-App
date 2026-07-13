@@ -90,11 +90,11 @@ export default function FriendsScreen({ navigation, route }: any) {
         }
     };
 
-    const handleInviteToGroup = async (userId: string) => {
-        const result = await sendInvite(userId, currentUser?.name || 'Driver', coords.latitude, coords.longitude);
+    const handleInviteToGroup = async (targetUserId: string) => {
+        const result = await sendInvite(targetUserId, currentUser?.name || 'Driver', coords.latitude, coords.longitude);
         if (result.success && result.groupId) {
             Alert.alert("Success", "Invite sent. The group will start after it is accepted.");
-            await refreshGroupDetails();
+            await refreshGroupDetails(result.groupId);
         } else {
             Alert.alert("Error", "Failed to send invite.");
         }
@@ -229,12 +229,19 @@ export default function FriendsScreen({ navigation, route }: any) {
                                 const relationship = groupRelationship(item.id, groupDetails);
                                 return (
                             <TouchableOpacity
-                                style={[styles.actionButton, relationship && styles.disabledButton]}
+                                style={[
+                                    styles.actionButton,
+                                    relationship === 'member' && styles.disabledButton,
+                                    relationship === 'pending' && styles.pendingInviteButton,
+                                ]}
                                 onPress={() => handleInviteToGroup(item.id)}
                                 disabled={!!relationship}
                             >
-                                <Text style={styles.actionButtonText}>
-                                    {relationship === 'member' ? 'In Group' : relationship === 'pending' ? 'Invited' : 'Invite to Group'}
+                                <Text style={[
+                                    styles.actionButtonText,
+                                    relationship === 'pending' && styles.pendingInviteButtonText,
+                                ]}>
+                                    {relationship === 'member' ? 'In Group' : relationship === 'pending' ? 'Pending' : 'Invite to Group'}
                                 </Text>
                             </TouchableOpacity>
                                 );
@@ -560,6 +567,14 @@ const styles = StyleSheet.create({
     },
     disabledButton: {
         opacity: 0.5,
+    },
+    pendingInviteButton: {
+        backgroundColor: '#18181B',
+        borderWidth: 1,
+        borderColor: '#27272A',
+    },
+    pendingInviteButtonText: {
+        color: '#71717A',
     },
     primaryButtonSmall: {
         backgroundColor: 'rgba(168, 85, 247, 0.2)',

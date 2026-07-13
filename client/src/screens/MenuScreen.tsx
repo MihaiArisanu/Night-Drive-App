@@ -1,5 +1,5 @@
 import { ArrowLeft, Bookmark, MapPinOff, MessageSquare, Search, UserPlus, X, Users, LogOut, CheckCircle, AlertCircle, Info } from "lucide-react-native";
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, Modal, KeyboardAvoidingView, Platform, ActivityIndicator } from "react-native";
+import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, Modal, KeyboardAvoidingView, Platform, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useCallback, useState } from "react";
 import { useFocusEffect } from '@react-navigation/native';
@@ -10,17 +10,19 @@ import { useDeleteAccount } from "../hooks/useDeleteAccount";
 import { useFriendRequests, FriendRequestResult } from "../hooks/useFriendRequests";
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useCurrentUser } from '../hooks/useCurrentUser';
-import { apiFetch } from '../services/api';
+import { apiFetch, AuthStorage } from '../services/api';
 
 export default function MenuScreen({ navigation }: any) {
   const { currentUser, refetchUser } = useCurrentUser();
   const { confirmAndDelete, isDeleting } = useDeleteAccount();
   const {
-    activeGroupId, setActiveGroupId,
-    setGroupMembers
+    activeGroupId,
+    clearGroupState,
   } = useSettingsStore();
 
   const [isTermsVisible, setIsTermsVisible] = useState(false);
+  const [isLeavingGroup, setIsLeavingGroup] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
 
   useFocusEffect(useCallback(() => {
     refetchUser();
@@ -101,9 +103,45 @@ export default function MenuScreen({ navigation }: any) {
     setFeedback(null);
   };
 
+  const leaveCurrentGroup = async () => {
+    if (!activeGroupId || isLeavingGroup) return;
+
+    setIsLeavingGroup(true);
+    try {
+      await apiFetch(`/groups/${activeGroupId}/members/me`, { method: 'DELETE' });
+      clearGroupState();
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Please try again.';
+      Alert.alert('Could not leave group', message);
+    } finally {
+      setIsLeavingGroup(false);
+    }
+  };
+
   const handleLeaveGroup = () => {
-    setActiveGroupId(null);
-    setGroupMembers([]);
+    Alert.alert(
+      'Leave current group?',
+      'You will stop receiving this group’s route and updates.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Leave', style: 'destructive', onPress: leaveCurrentGroup },
+      ],
+    );
+  };
+
+  const handleSignOut = async () => {
+    if (isSigningOut) return;
+
+    setIsSigningOut(true);
+    try {
+      await apiFetch('/auth/logout', { method: 'POST' });
+    } catch {
+      // The live location expires after 60 seconds even if the device is offline.
+    } finally {
+      await AuthStorage.clearTokens();
+      setIsSigningOut(false);
+      navigation.reset({ index: 0, routes: [{ name: 'Auth' }] });
+    }
   };
 
   return (
@@ -149,8 +187,14 @@ export default function MenuScreen({ navigation }: any) {
                 <Users color="#A855F7" size={20} />
                 <Text style={styles.messageTitle}>CURRENT GROUP</Text>
               </View>
-              <TouchableOpacity onPress={handleLeaveGroup} style={styles.leaveButton}>
-                <LogOut color="#EF4444" size={20} />
+              <TouchableOpacity
+                onPress={handleLeaveGroup}
+                style={styles.leaveButton}
+                disabled={isLeavingGroup}
+              >
+                {isLeavingGroup
+                  ? <ActivityIndicator color="#EF4444" size="small" />
+                  : <LogOut color="#EF4444" size={20} />}
               </TouchableOpacity>
             </View>
           </View>
@@ -212,10 +256,17 @@ export default function MenuScreen({ navigation }: any) {
         <View style={styles.accountActionsContainer}>
           <TouchableOpacity
             style={styles.signOutButton}
-            onPress={() => navigation.navigate("Auth")}
+            onPress={handleSignOut}
+            disabled={isSigningOut}
           >
-            <LogOut color="white" size={16} style={{ marginRight: 8 }} />
-            <Text style={styles.signOutText}>SIGN OUT</Text>
+            {isSigningOut ? (
+              <ActivityIndicator color="white" size="small" />
+            ) : (
+              <>
+                <LogOut color="white" size={16} style={{ marginRight: 8 }} />
+                <Text style={styles.signOutText}>SIGN OUT</Text>
+              </>
+            )}
           </TouchableOpacity>
 
           <TouchableOpacity

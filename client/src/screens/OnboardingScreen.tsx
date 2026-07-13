@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Platform, PermissionsAndroid, LayoutAnimation, UIManager } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MapPin, Users, Zap, Mic } from 'lucide-react-native';
+import { Bell, MapPin, Users, Zap, Mic } from 'lucide-react-native';
 import Geolocation from 'react-native-geolocation-service';
-import { request, PERMISSIONS } from 'react-native-permissions';
+import { request, requestNotifications, PERMISSIONS } from 'react-native-permissions';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
     UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -14,7 +14,7 @@ export default function OnboardingScreen({ navigation }: any) {
 
     const nextStep = () => {
         LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-        if (step < 3) {
+        if (step < 4) {
             setStep(step + 1);
         } else {
             finishOnboarding();
@@ -42,8 +42,12 @@ export default function OnboardingScreen({ navigation }: any) {
         }, 150);
     };
 
-    const handleDenyPermissions = () => {
+    const handleDenyLocationPermission = () => {
         navigation.replace('PermissionError');
+    };
+
+    const handleSkipOptionalPermission = () => {
+        nextStep();
     };
 
     const handleAcceptMicrophone = () => {
@@ -57,6 +61,18 @@ export default function OnboardingScreen({ navigation }: any) {
                 nextStep();
             } catch (error) {
                 console.warn(error);
+                nextStep();
+            }
+        }, 150);
+    };
+
+    const handleAcceptNotifications = () => {
+        setTimeout(async () => {
+            try {
+                await requestNotifications(['alert', 'badge', 'sound']);
+            } catch (error) {
+                console.warn(error);
+            } finally {
                 nextStep();
             }
         }, 150);
@@ -83,7 +99,7 @@ export default function OnboardingScreen({ navigation }: any) {
                             <TouchableOpacity style={styles.btnAccept} onPress={handleAcceptPermissions}>
                                 <Text style={styles.btnAcceptText}>ACCEPT</Text>
                             </TouchableOpacity>
-                            <TouchableOpacity style={styles.btnDeny} onPress={handleDenyPermissions}>
+                            <TouchableOpacity style={styles.btnDeny} onPress={handleDenyLocationPermission}>
                                 <Text style={styles.btnDenyText}>DENY</Text>
                             </TouchableOpacity>
                         </View>
@@ -97,17 +113,17 @@ export default function OnboardingScreen({ navigation }: any) {
                         </View>
                         <Text style={styles.title}>Microphone Access</Text>
                         <Text style={styles.description}>
-                            To use Voice Commands and hands-free navigation while driving, the app needs access to your microphone.
+                            To send live voice messages safely to your ride group, NightDrive needs access to your microphone.
                         </Text>
                         <Text style={styles.subDescription}>
-                            Your voice commands are processed securely.
+                            Group voice is transmitted live and is not stored.
                         </Text>
 
                         <View style={styles.permissionsButtonsRow}>
                             <TouchableOpacity style={styles.btnAccept} onPress={handleAcceptMicrophone}>
                                 <Text style={styles.btnAcceptText}>ACCEPT</Text>
                             </TouchableOpacity>
-                            <TouchableOpacity style={styles.btnDeny} onPress={handleDenyPermissions}>
+                            <TouchableOpacity style={styles.btnDeny} onPress={handleSkipOptionalPermission}>
                                 <Text style={styles.btnDenyText}>DENY</Text>
                             </TouchableOpacity>
                         </View>
@@ -115,6 +131,30 @@ export default function OnboardingScreen({ navigation }: any) {
                 )}
 
                 {step === 2 && (
+                    <View style={styles.stepContainer}>
+                        <View style={styles.iconCircle}>
+                            <Bell color="#8A2BE2" size={40} />
+                        </View>
+                        <Text style={styles.title}>Notification Access</Text>
+                        <Text style={styles.description}>
+                            Allow notifications so you do not miss ride group invitations, friend requests, and important activity updates.
+                        </Text>
+                        <Text style={styles.subDescription}>
+                            You can change this permission at any time in your device settings.
+                        </Text>
+
+                        <View style={styles.permissionsButtonsRow}>
+                            <TouchableOpacity style={styles.btnAccept} onPress={handleAcceptNotifications}>
+                                <Text style={styles.btnAcceptText}>ACCEPT</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.btnDeny} onPress={handleSkipOptionalPermission}>
+                                <Text style={styles.btnDenyText}>DENY</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                )}
+
+                {step === 3 && (
                     <View style={styles.stepContainer}>
                         <View style={styles.iconCircle}>
                             <Users color="#8A2BE2" size={40} />
@@ -126,7 +166,7 @@ export default function OnboardingScreen({ navigation }: any) {
                     </View>
                 )}
 
-                {step === 3 && (
+                {step === 4 && (
                     <View style={styles.stepContainer}>
                         <View style={styles.iconCircle}>
                             <Zap color="#8A2BE2" size={40} />
@@ -139,19 +179,19 @@ export default function OnboardingScreen({ navigation }: any) {
                 )}
             </View>
 
-            {step > 1 && (
+            {step > 2 && (
                 <View style={styles.bottomControls}>
                     <TouchableOpacity onPress={finishOnboarding} style={styles.skipBtn}>
                         <Text style={styles.skipText}>Skip</Text>
                     </TouchableOpacity>
 
                     <View style={styles.dotsContainer}>
-                        <View style={[styles.dot, step === 2 && styles.activeDot]} />
                         <View style={[styles.dot, step === 3 && styles.activeDot]} />
+                        <View style={[styles.dot, step === 4 && styles.activeDot]} />
                     </View>
 
                     <TouchableOpacity onPress={nextStep} style={styles.nextBtn}>
-                        <Text style={styles.nextText}>{step === 3 ? "LET'S GO" : "NEXT"}</Text>
+                        <Text style={styles.nextText}>{step === 4 ? "LET'S GO" : "NEXT"}</Text>
                     </TouchableOpacity>
                 </View>
             )}

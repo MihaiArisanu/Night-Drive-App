@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { API_BASE_URL } from '@env';
+import { apiFetch } from '../services/api';
 
 export interface FriendLocation {
     id: string;
@@ -10,28 +10,29 @@ export interface FriendLocation {
     profile_picture_url?: string;
 }
 
-export function useNearbyFriends(userLat: number | null, userLng: number | null, isDNDActive: boolean, token: string | null) {
+export function useNearbyFriends(
+    userLat: number | null,
+    userLng: number | null,
+    token: string | null,
+    activeGroupId: string | null,
+) {
     const [friends, setFriends] = useState<FriendLocation[]>([]);
 
     const fetchFriends = useCallback(async () => {
-        if (!userLat || !userLng || isDNDActive || !token) {
+        if (!userLat || !userLng || !token) {
             setFriends([]);
             return;
         }
 
         try {
-            const response = await fetch(`${API_BASE_URL}/friends/nearby?lat=${userLat}&lng=${userLng}`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (!response.ok) throw new Error('Failed to fetch friends');
-
-            const data = await response.json();
+            const groupQuery = activeGroupId ? `?groupId=${encodeURIComponent(activeGroupId)}` : '';
+            const data = await apiFetch(`/friends/nearby${groupQuery}`);
             if (data && Array.isArray(data)) {
                 setFriends(data);
             }
         } catch {
         }
-    }, [userLat, userLng, isDNDActive, token]);
+    }, [userLat, userLng, token, activeGroupId]);
 
     useEffect(() => {
         fetchFriends();

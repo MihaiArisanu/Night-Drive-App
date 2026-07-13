@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MihaiArisanu/nightdrive-backend/internal/db"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
 )
@@ -18,7 +19,7 @@ type contextKey string
 
 const UserIDKey contextKey = "userID"
 
-func RequireAuth(next http.HandlerFunc) http.HandlerFunc {
+func RequireAuth(rdb *redis.Client, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
@@ -37,7 +38,7 @@ func RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 			return jwtKey, nil
-		})
+		}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
 
 		if err != nil || !token.Valid {
 			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized - Invalid or Expired Token", nil)
@@ -50,7 +51,24 @@ func RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		userID := claims["user_id"].(string)
+		if tokenType, _ := claims["type"].(string); tokenType == "refresh" {
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized - Invalid Token Type", nil)
+			return
+		}
+		userID, ok := claims["user_id"].(string)
+		if !ok || userID == "" {
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized - Invalid Token Claims", nil)
+			return
+		}
+		revoked, err := db.IsUserAccessRevoked(r.Context(), rdb, userID)
+		if err != nil {
+			RespondWithError(w, http.StatusServiceUnavailable, "auth_unavailable", "Authentication service unavailable", err)
+			return
+		}
+		if revoked {
+			RespondWithError(w, http.StatusUnauthorized, "account_deleted", "Account no longer exists", nil)
+			return
+		}
 
 		ctx := context.WithValue(r.Context(), UserIDKey, userID)
 
@@ -70,7 +88,7 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 		log.Printf("[%s] %s %s - %d %s - %v",
 			r.RemoteAddr,
 			r.Method,
-			r.RequestURI,
+			r.URL.EscapedPath(),
 			lrw.statusCode,
 			http.StatusText(lrw.statusCode),
 			duration,

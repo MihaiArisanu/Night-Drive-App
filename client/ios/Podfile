@@ -18,7 +18,8 @@ rn_maps_path = '../node_modules/react-native-maps'
 require_relative '../node_modules/react-native-permissions/scripts/setup.rb'
 
 setup_permissions([
-  'Microphone'
+  'Microphone',
+  'Notifications'
 ])
 
 target 'NightDriveV2' do

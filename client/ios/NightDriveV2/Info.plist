@@ -54,7 +54,7 @@
 	<string>NightDrive uses your location in the background to keep your driving session synced with friends, even when your screen is locked.</string>
 
 	<key>NSMicrophoneUsageDescription</key>
-	<string>NightDrive needs access to the microphone to enable voice commands while driving.</string>
+	<string>NightDrive uses the microphone for voice commands and live group voice communication while driving.</string>
 
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>NightDrive uses speech recognition to accurately process and transcribe your voice commands.</string>

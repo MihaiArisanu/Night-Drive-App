@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/MihaiArisanu/nightdrive-backend/internal/models"
@@ -65,6 +66,81 @@ redis.call('EXPIRE', pending, ttl_seconds)
 redis.call('EXPIRE', user_invites, ttl_seconds)
 return 'created'
 `)
+
+var leaveRideGroupScript = redis.NewScript(`
+local meta = KEYS[1]
+local members = KEYS[2]
+local pending = KEYS[3]
+
+local user_id = ARGV[1]
+local user_invites_prefix = ARGV[2]
+local ttl_seconds = tonumber(ARGV[3])
+
+if redis.call('EXISTS', meta) == 0 then
+  return {'not_found', '', ''}
+end
+if redis.call('SISMEMBER', members, user_id) == 0 then
+  return {'not_member', '', ''}
+end
+
+local owner_id = redis.call('HGET', meta, 'owner_id')
+redis.call('SREM', members, user_id)
+
+local remaining = redis.call('SMEMBERS', members)
+table.sort(remaining)
+local dissolved = #remaining == 0
+local cancelled_targets = {}
+local pending_entries = redis.call('HGETALL', pending)
+
+for index = 1, #pending_entries, 2 do
+  local target_id = pending_entries[index]
+  local invite_id = pending_entries[index + 1]
+  local user_invites = user_invites_prefix .. target_id
+  local payload = redis.call('HGET', user_invites, invite_id)
+  local should_cancel = dissolved
+
+  if not should_cancel and payload then
+    local decoded, invite = pcall(cjson.decode, payload)
+    should_cancel = decoded and invite['senderId'] == user_id
+  end
+
+  if not payload then
+    should_cancel = true
+  end
+
+  if should_cancel then
+    redis.call('HDEL', pending, target_id)
+    redis.call('HDEL', user_invites, invite_id)
+    table.insert(cancelled_targets, target_id)
+  end
+end
+
+table.sort(cancelled_targets)
+
+if dissolved then
+  redis.call('DEL', meta, members, pending)
+  return {'dissolved', '', table.concat(cancelled_targets, ',')}
+end
+
+if owner_id == user_id then
+  redis.call('HSET', meta, 'owner_id', remaining[1])
+end
+
+redis.call('EXPIRE', meta, ttl_seconds)
+redis.call('EXPIRE', members, ttl_seconds)
+if redis.call('EXISTS', pending) == 1 then
+  redis.call('EXPIRE', pending, ttl_seconds)
+end
+
+return {'left', table.concat(remaining, ','), table.concat(cancelled_targets, ',')}
+`)
+
+type LeaveRideGroupResult struct {
+	AlreadyAbsent            bool
+	Dissolved                bool
+	RemainingMemberIDs       []string
+	CancelledInviteTargetIDs []string
+}
 
 func CreateGroupInvite(ctx context.Context, rdb *redis.Client, invite models.GroupInvite) error {
 	payload, err := json.Marshal(invite)
@@ -201,4 +277,61 @@ func GetRideGroupState(ctx context.Context, rdb *redis.Client, groupID, requeste
 	sort.Strings(members)
 	sort.Strings(pending)
 	return meta["owner_id"], meta["status"], members, pending, nil
+}
+
+// LeaveRideGroup atomically removes a user from a ride group. Repeated calls are
+// safe: an expired group or an already-removed member is treated as a no-op.
+func LeaveRideGroup(ctx context.Context, rdb *redis.Client, groupID, userID string) (LeaveRideGroupResult, error) {
+	values, err := leaveRideGroupScript.Run(ctx, rdb, []string{
+		groupMetaKey(groupID),
+		groupMembersKey(groupID),
+		groupPendingKey(groupID),
+	}, userID, "group_invites:", int(groupInviteTTL.Seconds())).Slice()
+	if err != nil {
+		return LeaveRideGroupResult{}, fmt.Errorf("leave ride group: %w", err)
+	}
+	if len(values) != 3 {
+		return LeaveRideGroupResult{}, fmt.Errorf("unexpected leave ride group response length: %d", len(values))
+	}
+
+	status, ok := values[0].(string)
+	if !ok {
+		return LeaveRideGroupResult{}, fmt.Errorf("unexpected leave ride group status: %T", values[0])
+	}
+	remaining, err := splitRedisIDs(values[1])
+	if err != nil {
+		return LeaveRideGroupResult{}, err
+	}
+	cancelledTargets, err := splitRedisIDs(values[2])
+	if err != nil {
+		return LeaveRideGroupResult{}, err
+	}
+
+	result := LeaveRideGroupResult{
+		RemainingMemberIDs:       remaining,
+		CancelledInviteTargetIDs: cancelledTargets,
+	}
+	switch status {
+	case "left":
+		return result, nil
+	case "dissolved":
+		result.Dissolved = true
+		return result, nil
+	case "not_found", "not_member":
+		result.AlreadyAbsent = true
+		return result, nil
+	default:
+		return LeaveRideGroupResult{}, fmt.Errorf("unexpected leave ride group result: %s", status)
+	}
+}
+
+func splitRedisIDs(value interface{}) ([]string, error) {
+	raw, ok := value.(string)
+	if !ok {
+		return nil, fmt.Errorf("unexpected Redis ID list: %T", value)
+	}
+	if raw == "" {
+		return []string{}, nil
+	}
+	return strings.Split(raw, ","), nil
 }

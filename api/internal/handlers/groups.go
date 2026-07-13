@@ -312,3 +312,61 @@ func JoinGroupHandler(rdb *redis.Client, hub *ws.Hub) http.HandlerFunc {
 		})
 	}
 }
+
+func LeaveGroupHandler(rdb *redis.Client, hub *ws.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
+			return
+		}
+		userID, ok := r.Context().Value(UserIDKey).(string)
+		if !ok || userID == "" {
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
+			return
+		}
+		groupID := r.PathValue("id")
+		if _, err := uuid.Parse(groupID); err != nil {
+			RespondWithError(w, http.StatusBadRequest, "invalid_group_id", "Invalid group ID", nil)
+			return
+		}
+
+		result, err := db.LeaveRideGroup(r.Context(), rdb, groupID, userID)
+		if err != nil {
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to leave group", err)
+			return
+		}
+		// Reconnect with a new ticket so this socket immediately loses its former
+		// group authorization, even if a custom client keeps the connection open.
+		hub.DisconnectUser(userID)
+
+		if !result.AlreadyAbsent {
+			memberLeftMessage, marshalErr := json.Marshal(map[string]interface{}{
+				"type": "GROUP_MEMBER_LEFT",
+				"payload": map[string]interface{}{
+					"groupId":   groupID,
+					"userId":    userID,
+					"dissolved": result.Dissolved,
+				},
+			})
+			if marshalErr == nil {
+				for _, memberID := range result.RemainingMemberIDs {
+					hub.SendToUser(memberID, memberLeftMessage)
+				}
+			}
+
+			inviteCancelledMessage, marshalErr := json.Marshal(map[string]interface{}{
+				"type": "GROUP_INVITE_CANCELLED",
+				"payload": map[string]string{
+					"groupId": groupID,
+				},
+			})
+			if marshalErr == nil {
+				for _, targetID := range result.CancelledInviteTargetIDs {
+					hub.SendToUser(targetID, inviteCancelledMessage)
+				}
+			}
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/MihaiArisanu/nightdrive-backend/internal/models"
 )
@@ -99,43 +100,81 @@ func SearchUserByTag(dbConn *sql.DB, tag string) (*UserSearchResponse, error) {
 	return user, nil
 }
 
-func GetNearbyActiveUsers(dbConn *sql.DB, lat, lng float64, userID string) ([]models.NearbyUser, error) {
-	query := `
-		SELECT 
-			u.id, 
-			u.username as name,
-			COALESCE(u.profile_picture_url, '') AS profile_picture_url,
-			ST_Y(u.location::geometry) as latitude, 
-			ST_X(u.location::geometry) as longitude, 
-			COALESCE(u.heading, 0.0) as heading
+type FriendLocationProfile struct {
+	ID                string
+	Name              string
+	ProfilePictureURL string
+}
+
+func GetFriendsForLocationSharing(ctx context.Context, dbConn *sql.DB, userID string) ([]FriendLocationProfile, error) {
+	const query = `
+		SELECT
+			u.id,
+			u.username,
+			COALESCE(u.profile_picture_url, '')
 		FROM users u
-		JOIN friendships f ON (f.user_id_1 = u.id AND f.user_id_2 = $3) OR (f.user_id_1 = $3 AND f.user_id_2 = u.id)
-		WHERE u.is_dnd = false
-		  AND u.location IS NOT NULL
-		  AND ST_DWithin(
-			u.location, 
-			ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, 
-			50000
-		  )
+		JOIN friendships f
+		  ON (f.user_id_1 = u.id AND f.user_id_2 = $1)
+		  OR (f.user_id_1 = $1 AND f.user_id_2 = u.id)
+		ORDER BY u.username, u.id
 	`
 
-	rows, err := dbConn.Query(query, lng, lat, userID)
+	rows, err := dbConn.QueryContext(ctx, query, userID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query nearby users: %v", err)
+		return nil, fmt.Errorf("load friends for location sharing: %w", err)
 	}
 	defer rows.Close()
 
-	users := []models.NearbyUser{}
+	friends := make([]FriendLocationProfile, 0)
 	for rows.Next() {
-		var u models.NearbyUser
-		err := rows.Scan(&u.ID, &u.Name, &u.ProfilePictureURL, &u.Latitude, &u.Longitude, &u.Heading)
-		if err != nil {
-			continue
+		var friend FriendLocationProfile
+		if err := rows.Scan(&friend.ID, &friend.Name, &friend.ProfilePictureURL); err != nil {
+			return nil, fmt.Errorf("scan friend for location sharing: %w", err)
 		}
-		users = append(users, u)
+		friends = append(friends, friend)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate friends for location sharing: %w", err)
+	}
+	return friends, nil
+}
+
+func GetLocationProfiles(ctx context.Context, dbConn *sql.DB, userIDs []string) ([]FriendLocationProfile, error) {
+	if len(userIDs) == 0 {
+		return []FriendLocationProfile{}, nil
 	}
 
-	return users, nil
+	placeholders := make([]string, len(userIDs))
+	args := make([]interface{}, len(userIDs))
+	for index, userID := range userIDs {
+		placeholders[index] = fmt.Sprintf("$%d", index+1)
+		args[index] = userID
+	}
+	query := fmt.Sprintf(`
+		SELECT id, username, COALESCE(profile_picture_url, '')
+		FROM users
+		WHERE id IN (%s)
+		ORDER BY username, id
+	`, strings.Join(placeholders, ","))
+
+	rows, err := dbConn.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("load location profiles: %w", err)
+	}
+	defer rows.Close()
+
+	profiles := make([]FriendLocationProfile, 0, len(userIDs))
+	for rows.Next() {
+		var profile FriendLocationProfile
+		if err := rows.Scan(&profile.ID, &profile.Name, &profile.ProfilePictureURL); err != nil {
+			return nil, fmt.Errorf("scan location profile: %w", err)
+		}
+		profiles = append(profiles, profile)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate location profiles: %w", err)
+	}
+	return profiles, nil
 }
 
 func GetGroupParticipants(ctx context.Context, database *sql.DB, requesterID string, userIDs []string) ([]models.GroupParticipant, error) {

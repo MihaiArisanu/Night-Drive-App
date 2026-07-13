@@ -2,6 +2,27 @@ import * as Keychain from 'react-native-keychain';
 import { API_BASE_URL } from '@env';
 import { useSettingsStore } from '../store/useSettingsStore';
 
+interface ApiFetchOptions extends RequestInit {
+    skipAuthentication?: boolean;
+}
+
+interface ApiErrorBody {
+    error?: string;
+    message?: string;
+}
+
+export class ApiError extends Error {
+    readonly status: number;
+    readonly code: string;
+
+    constructor(status: number, code: string, message: string) {
+        super(message);
+        this.name = 'ApiError';
+        this.status = status;
+        this.code = code;
+    }
+}
+
 export const AuthStorage = {
     saveTokens: async (accessToken: string, refreshToken: string) => {
         await Keychain.setGenericPassword('tokens', JSON.stringify({ accessToken, refreshToken }));
@@ -47,21 +68,22 @@ const processQueue = (error: any, token: string | null = null) => {
     failedQueue = [];
 };
 
-export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
-    let token = useSettingsStore.getState().token;
+export const apiFetch = async (endpoint: string, options: ApiFetchOptions = {}) => {
+    const { skipAuthentication = false, ...requestOptions } = options;
+    let token = skipAuthentication ? null : useSettingsStore.getState().token;
 
-    if (!token) {
+    if (!skipAuthentication && !token) {
         token = await AuthStorage.getAccessToken();
     }
 
     const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-        ...(options.headers as Record<string, string>),
+        ...(requestOptions.headers as Record<string, string>),
     };
 
     let url = `${API_BASE_URL}${endpoint}`;
-    let response = await fetch(url, { ...options, headers });
+    let response = await fetch(url, { ...requestOptions, headers });
 
     if (response.status === 401 && token) {
         if (isRefreshing) {
@@ -70,7 +92,7 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
                     failedQueue.push({ resolve, reject });
                 });
                 headers.Authorization = `Bearer ${newToken}`;
-                return await fetch(url, { ...options, headers });
+                return await fetch(url, { ...requestOptions, headers });
             } catch (err) {
                 throw err;
             }
@@ -100,7 +122,7 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
                 processQueue(null, newAccessToken);
 
                 headers.Authorization = `Bearer ${newAccessToken}`;
-                response = await fetch(url, { ...options, headers });
+                response = await fetch(url, { ...requestOptions, headers });
 
             } catch (refreshErr) {
                 isRefreshing = false;
@@ -117,9 +139,25 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
         const contentType = response.headers.get('content-type') || '';
         const isHtmlResponse = contentType.includes('text/html') || /^\s*<(?:!doctype|html)/i.test(responseText);
         if (isHtmlResponse) {
-            throw new Error('NightDrive service is temporarily unavailable. Please try again.');
+            throw new ApiError(
+                response.status,
+                'service_unavailable',
+                'NightDrive service is temporarily unavailable. Please try again.',
+            );
         }
-        throw new Error(responseText || 'Error from NightDrive server');
+
+        let errorBody: ApiErrorBody | null = null;
+        try {
+            errorBody = JSON.parse(responseText) as ApiErrorBody;
+        } catch {
+            // Some upstream failures can still return plain text.
+        }
+
+        throw new ApiError(
+            response.status,
+            errorBody?.error || 'api_error',
+            errorBody?.message || responseText || 'NightDrive could not complete the request.',
+        );
     }
 
     if (response.status === 204 || responseText.trim() === '') {

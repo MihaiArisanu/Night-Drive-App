@@ -11,17 +11,19 @@ export function useLocationBroadcaster(
     isDNDActive: boolean
 ) {
     const lastBroadcastRef = useRef(0);
+    const lastDNDStateRef = useRef<boolean | null>(null);
 
     useEffect(() => {
         if (!userId || !token || latitude === 0) return;
 
         const now = Date.now();
-        if (now - lastBroadcastRef.current < 5000) return;
+        const dndChanged = lastDNDStateRef.current !== isDNDActive;
+        if (!dndChanged && now - lastBroadcastRef.current < 5000) return;
 
         lastBroadcastRef.current = now;
+        lastDNDStateRef.current = isDNDActive;
 
         const payload = {
-            userId,
             latitude,
             longitude,
             heading,

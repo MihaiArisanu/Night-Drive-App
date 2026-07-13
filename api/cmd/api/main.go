@@ -35,6 +35,7 @@ func main() {
 	}
 
 	go db.StartMaintenanceWorker(ctx, database)
+	go handlers.StartVoiceRetentionWorker(ctx, 24*time.Hour)
 
 	redisURL := os.Getenv("REDIS_URL")
 	if redisURL == "" {
@@ -45,6 +46,9 @@ func main() {
 		log.Println("Closing Redis client...")
 		rdb.Close()
 	}()
+	if err := db.DeleteLegacyLocationIndex(ctx, rdb); err != nil {
+		log.Printf("Failed to remove legacy location index: %v", err)
+	}
 
 	minioClient, err := db.NewMinioClient()
 	if err != nil {
@@ -85,54 +89,59 @@ func main() {
 	})
 
 	strictRateLimit := handlers.RateLimit(rdb, 5, time.Minute)
+	requireAuth := func(next http.HandlerFunc) http.HandlerFunc {
+		return handlers.RequireAuth(rdb, next)
+	}
 	mux.HandleFunc("/api/v1/login", strictRateLimit(handlers.LoginHandler(database, hub, rdb)))
 	mux.HandleFunc("/api/v1/users", strictRateLimit(handlers.CreateUserHandler(database)))
 	mux.HandleFunc("/api/v1/auth/refresh", strictRateLimit(handlers.RefreshTokenHandler(database, rdb)))
-	mux.HandleFunc("/api/v1/auth/logout", strictRateLimit(handlers.RequireAuth(handlers.LogoutHandler(rdb))))
+	mux.HandleFunc("/api/v1/auth/logout", strictRateLimit(requireAuth(handlers.LogoutHandler(rdb))))
+	mux.HandleFunc("/api/v1/auth/ws-ticket", requireAuth(handlers.CreateWebSocketTicketHandler(rdb)))
 	mux.HandleFunc("/api/v1/auth/forgot-password", strictRateLimit(handlers.ForgotPasswordHandler(database)))
 	mux.HandleFunc("/api/v1/events/nearby", handlers.GetNearbyEventsHandler(database))
-	mux.HandleFunc("/api/v1/users/search", handlers.RequireAuth(handlers.SearchUserHandler(database)))
-	mux.HandleFunc("/api/v1/users/me", handlers.RequireAuth(handlers.GetUserMeHandler(database)))
-	mux.HandleFunc("/api/v1/users/profile", handlers.RequireAuth(handlers.UpdateUserProfileHandler(database)))
-	mux.HandleFunc("/api/v1/users/password", handlers.RequireAuth(handlers.ChangePasswordHandler(database)))
-	mux.HandleFunc("/api/v1/users/feedback", handlers.RequireAuth(handlers.SubmitFeedbackHandler(database)))
+	mux.HandleFunc("/api/v1/users/search", requireAuth(handlers.SearchUserHandler(database)))
+	mux.HandleFunc("/api/v1/users/me", requireAuth(handlers.GetUserMeHandler(database, rdb, minioClient, hub)))
+	mux.HandleFunc("/api/v1/users/profile", requireAuth(handlers.UpdateUserProfileHandler(database)))
+	mux.HandleFunc("/api/v1/users/password", requireAuth(handlers.ChangePasswordHandler(database)))
+	mux.HandleFunc("/api/v1/users/feedback", requireAuth(handlers.SubmitFeedbackHandler(database)))
 
-	mux.HandleFunc("/api/v1/users/location", handlers.RequireAuth(handlers.UpdateUserLocationHandler(rdb)))
-	mux.HandleFunc("/api/v1/events", handlers.RequireAuth(handlers.CreateEventHandler(database, hub)))
+	mux.HandleFunc("/api/v1/users/location", requireAuth(handlers.UpdateUserLocationHandler(rdb)))
+	mux.HandleFunc("/api/v1/events", requireAuth(handlers.CreateEventHandler(database, hub)))
 
-	mux.HandleFunc("/api/v1/events/vote", handlers.RequireAuth(handlers.VoteEventHandler(database)))
-	mux.HandleFunc("/api/v1/friends", handlers.RequireAuth(handlers.GetAllFriendsHandler(database)))
-	mux.HandleFunc("/api/v1/friends/nearby", handlers.RequireAuth(handlers.GetNearbyFriendsHandler(database)))
-	mux.HandleFunc("/api/v1/friends/request", handlers.RequireAuth(handlers.SendFriendRequestHandler(database)))
-	mux.HandleFunc("/api/v1/friends/requests", handlers.RequireAuth(handlers.GetFriendRequestsHandler(database)))
-	mux.HandleFunc("/api/v1/friends/requests/{id}/respond", handlers.RequireAuth(handlers.RespondFriendRequestHandler(database)))
+	mux.HandleFunc("/api/v1/events/vote", requireAuth(handlers.VoteEventHandler(database)))
+	mux.HandleFunc("/api/v1/friends", requireAuth(handlers.GetAllFriendsHandler(database)))
+	mux.HandleFunc("/api/v1/friends/nearby", requireAuth(handlers.GetNearbyFriendsHandler(database, rdb)))
+	mux.HandleFunc("/api/v1/friends/request", requireAuth(handlers.SendFriendRequestHandler(database)))
+	mux.HandleFunc("/api/v1/friends/requests", requireAuth(handlers.GetFriendRequestsHandler(database)))
+	mux.HandleFunc("/api/v1/friends/requests/{id}/respond", requireAuth(handlers.RespondFriendRequestHandler(database)))
 
-	mux.HandleFunc("/api/v1/voice/upload", handlers.RequireAuth(handlers.UploadVoiceHandler(hub)))
-	mux.HandleFunc("/api/v1/users/places", handlers.RequireAuth(handlers.PlacesHandler(database)))
-	mux.HandleFunc("/api/v1/users/places/{id}", handlers.RequireAuth(handlers.PlaceByIDHandler(database)))
-	mux.HandleFunc("/api/v1/users/dislikes", handlers.RequireAuth(handlers.DislikesHandler(database)))
-	mux.HandleFunc("/api/v1/users/dislikes/{id}", handlers.RequireAuth(handlers.DislikeByIDHandler(database)))
+	mux.HandleFunc("/api/v1/users/places", requireAuth(handlers.PlacesHandler(database)))
+	mux.HandleFunc("/api/v1/users/places/{id}", requireAuth(handlers.PlaceByIDHandler(database)))
+	mux.HandleFunc("/api/v1/users/dislikes", requireAuth(handlers.DislikesHandler(database)))
+	mux.HandleFunc("/api/v1/users/dislikes/{id}", requireAuth(handlers.DislikeByIDHandler(database)))
 
-	mux.HandleFunc("/api/v1/locations/history", handlers.RequireAuth(handlers.LocationHistoryHandler(database)))
+	mux.HandleFunc("/api/v1/locations/history", requireAuth(handlers.LocationHistoryHandler(database)))
 
-	mux.HandleFunc("/api/v1/routes/zen/start", handlers.RequireAuth(handlers.StartZenModeHandler(rdb)))
-	mux.HandleFunc("/api/v1/routes/zen/stop", handlers.RequireAuth(handlers.StopZenModeHandler(rdb)))
-	mux.HandleFunc("/api/v1/routes/zen/sync", handlers.RequireAuth(handlers.SyncZenLocationHandler(rdb)))
+	mux.HandleFunc("/api/v1/routes/zen/start", requireAuth(handlers.StartZenModeHandler(rdb)))
+	mux.HandleFunc("/api/v1/routes/zen/stop", requireAuth(handlers.StopZenModeHandler(rdb)))
+	mux.HandleFunc("/api/v1/routes/zen/sync", requireAuth(handlers.SyncZenLocationHandler(rdb)))
 
-	mux.HandleFunc("/api/v1/users/fcm", handlers.RequireAuth(handlers.UpdateFCMTokenHandler(database)))
+	mux.HandleFunc("/api/v1/users/fcm", requireAuth(handlers.UpdateFCMTokenHandler(database)))
 
-	mux.HandleFunc("/api/v1/groups/{id}/stop", handlers.RequireAuth(handlers.AddGroupStopHandler(database, hub)))
-	mux.HandleFunc("/api/v1/groups/invite", handlers.RequireAuth(handlers.InviteGroupHandler(database, hub, rdb)))
-	mux.HandleFunc("/api/v1/group-invites", handlers.RequireAuth(handlers.GetGroupInvitesHandler(rdb)))
-	mux.HandleFunc("/api/v1/group-invites/{id}", handlers.RequireAuth(handlers.DeleteGroupInviteHandler(rdb)))
-	mux.HandleFunc("/api/v1/groups/{id}/join", handlers.RequireAuth(handlers.JoinGroupHandler(rdb, hub)))
-	mux.HandleFunc("/api/v1/groups/{id}", handlers.RequireAuth(handlers.GetGroupDetailsHandler(database, rdb)))
+	mux.HandleFunc("/api/v1/groups/{id}/stop", requireAuth(handlers.AddGroupStopHandler(database, hub)))
+	mux.HandleFunc("/api/v1/groups/invite", requireAuth(handlers.InviteGroupHandler(database, hub, rdb)))
+	mux.HandleFunc("/api/v1/group-invites", requireAuth(handlers.GetGroupInvitesHandler(rdb)))
+	mux.HandleFunc("/api/v1/group-invites/{id}", requireAuth(handlers.DeleteGroupInviteHandler(rdb)))
+	mux.HandleFunc("/api/v1/groups/{id}/join", requireAuth(handlers.JoinGroupHandler(rdb, hub)))
+	mux.HandleFunc("/api/v1/groups/{id}/members/me", requireAuth(handlers.LeaveGroupHandler(rdb, hub)))
+	mux.HandleFunc("/api/v1/groups/{id}/voice-token", requireAuth(handlers.GroupVoiceTokenHandler(database, rdb)))
+	mux.HandleFunc("/api/v1/groups/{id}", requireAuth(handlers.GetGroupDetailsHandler(database, rdb)))
 
 	mux.HandleFunc("/api/v1/ws", func(w http.ResponseWriter, r *http.Request) {
-		handlers.ServeWS(hub, w, r)
+		handlers.ServeWS(hub, rdb, w, r)
 	})
 
-	mux.HandleFunc("/api/v1/users/avatar", handlers.RequireAuth(handlers.UploadAvatarHandler(database, minioClient)))
+	mux.HandleFunc("/api/v1/users/avatar", requireAuth(handlers.UploadAvatarHandler(database, minioClient)))
 	mux.HandleFunc("/api/v1/avatars/{filename}", handlers.ServeAvatarHandler(minioClient))
 	// Compatibility for clients that cached the former MinIO-style /avatars URL.
 	mux.HandleFunc("/avatars/{filename}", handlers.ServeAvatarHandler(minioClient))

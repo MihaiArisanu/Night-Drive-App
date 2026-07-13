@@ -7,13 +7,16 @@ import (
 	"database/sql"
 	"encoding/json"
 	"log"
+	"math"
 	"net/http"
 	"os"
-	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
+	"github.com/minio/minio-go/v7"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 
@@ -275,21 +278,12 @@ func SearchUserHandler(database *sql.DB) http.HandlerFunc {
 	}
 }
 
-func GetNearbyFriendsHandler(database *sql.DB) http.HandlerFunc {
+const maxFriendLocationDistanceMeters = 50_000
+
+func GetNearbyFriendsHandler(database *sql.DB, rdb *redis.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
-			return
-		}
-
-		latStr := r.URL.Query().Get("lat")
-		lngStr := r.URL.Query().Get("lng")
-
-		lat, errLat := strconv.ParseFloat(latStr, 64)
-		lng, errLng := strconv.ParseFloat(lngStr, 64)
-
-		if errLat != nil || errLng != nil {
-			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid or missing lat/lng parameters", nil)
 			return
 		}
 
@@ -299,21 +293,131 @@ func GetNearbyFriendsHandler(database *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		nearbyUsers, err := db.GetNearbyActiveUsers(database, lat, lng, userID)
+		requesterLocation, err := db.GetLiveLocation(r.Context(), rdb, userID)
+		if errors.Is(err, db.ErrLiveLocationNotFound) {
+			respondWithNearbyUsers(w, []models.NearbyUser{})
+			return
+		}
 		if err != nil {
-			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to fetch nearby friends", nil)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to load your live location", err)
+			return
+		}
+		if !isFreshLiveLocation(requesterLocation, time.Now()) {
+			respondWithNearbyUsers(w, []models.NearbyUser{})
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(nearbyUsers)
+		friendProfiles, err := db.GetFriendsForLocationSharing(r.Context(), database, userID)
+		if err != nil {
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to load friends", err)
+			return
+		}
+
+		groupMemberIDs := make(map[string]bool)
+		profileExists := make(map[string]bool, len(friendProfiles))
+		for _, friend := range friendProfiles {
+			profileExists[friend.ID] = true
+		}
+
+		groupID := r.URL.Query().Get("groupId")
+		if groupID != "" {
+			if _, err := uuid.Parse(groupID); err != nil {
+				RespondWithError(w, http.StatusBadRequest, "invalid_group_id", "Invalid group ID", nil)
+				return
+			}
+
+			_, status, memberIDs, _, groupErr := db.GetRideGroupState(r.Context(), rdb, groupID, userID)
+			switch {
+			case groupErr == nil && status == "active":
+				otherMemberIDs := make([]string, 0, len(memberIDs))
+				for _, memberID := range memberIDs {
+					if memberID == userID {
+						continue
+					}
+					groupMemberIDs[memberID] = true
+					if !profileExists[memberID] {
+						otherMemberIDs = append(otherMemberIDs, memberID)
+					}
+				}
+				groupProfiles, err := db.GetLocationProfiles(r.Context(), database, otherMemberIDs)
+				if err != nil {
+					RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to load group members", err)
+					return
+				}
+				friendProfiles = append(friendProfiles, groupProfiles...)
+			case errors.Is(groupErr, db.ErrGroupNotFound), errors.Is(groupErr, db.ErrGroupAccessDenied):
+				// A stale client-side group ID never grants access to group locations.
+			case groupErr != nil:
+				RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to validate group membership", groupErr)
+				return
+			}
+		}
+
+		friendIDs := make([]string, len(friendProfiles))
+		for index, friend := range friendProfiles {
+			friendIDs[index] = friend.ID
+		}
+		liveLocations, err := db.GetLiveLocations(r.Context(), rdb, friendIDs)
+		if err != nil {
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to load live locations", err)
+			return
+		}
+
+		now := time.Now()
+		nearbyUsers := make([]models.NearbyUser, 0, len(friendProfiles))
+		for _, friend := range friendProfiles {
+			location, exists := liveLocations[friend.ID]
+			if !exists || !isFreshLiveLocation(location, now) {
+				continue
+			}
+			if location.IsDND && !groupMemberIDs[friend.ID] {
+				continue
+			}
+			if distanceMeters(requesterLocation.Coordinates, location.Coordinates) > maxFriendLocationDistanceMeters {
+				continue
+			}
+			nearbyUsers = append(nearbyUsers, models.NearbyUser{
+				ID:                friend.ID,
+				Name:              friend.Name,
+				ProfilePictureURL: friend.ProfilePictureURL,
+				Coordinates:       location.Coordinates,
+				Heading:           location.Heading,
+			})
+		}
+
+		respondWithNearbyUsers(w, nearbyUsers)
 	}
 }
 
-func GetUserMeHandler(database *sql.DB) http.HandlerFunc {
+func respondWithNearbyUsers(w http.ResponseWriter, users []models.NearbyUser) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(users)
+}
+
+func isFreshLiveLocation(location models.LiveLocation, now time.Time) bool {
+	oldestAllowed := now.Add(-db.LiveLocationTTL).Unix()
+	return location.Timestamp >= oldestAllowed && location.Timestamp <= now.Add(5*time.Second).Unix()
+}
+
+func distanceMeters(from, to models.Coordinates) float64 {
+	const earthRadiusMeters = 6_371_000
+	toRadians := func(degrees float64) float64 { return degrees * math.Pi / 180 }
+
+	lat1 := toRadians(from.Latitude)
+	lat2 := toRadians(to.Latitude)
+	deltaLat := toRadians(to.Latitude - from.Latitude)
+	deltaLng := toRadians(to.Longitude - from.Longitude)
+	a := math.Sin(deltaLat/2)*math.Sin(deltaLat/2) +
+		math.Cos(lat1)*math.Cos(lat2)*math.Sin(deltaLng/2)*math.Sin(deltaLng/2)
+	a = math.Max(0, math.Min(1, a))
+	return earthRadiusMeters * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+}
+
+func GetUserMeHandler(database *sql.DB, rdb *redis.Client, minioClient *minio.Client, hub *ws.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
+		if r.Method != http.MethodGet && r.Method != http.MethodDelete {
 			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
 			return
 		}
@@ -321,6 +425,10 @@ func GetUserMeHandler(database *sql.DB) http.HandlerFunc {
 		userID, ok := r.Context().Value(UserIDKey).(string)
 		if !ok || userID == "" {
 			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
+			return
+		}
+		if r.Method == http.MethodDelete {
+			deleteUserAccount(w, r, database, rdb, minioClient, hub, userID)
 			return
 		}
 
@@ -340,6 +448,49 @@ func GetUserMeHandler(database *sql.DB) http.HandlerFunc {
 			"profile_picture_url": user.ProfilePictureURL,
 		})
 	}
+}
+
+func deleteUserAccount(
+	w http.ResponseWriter,
+	r *http.Request,
+	database *sql.DB,
+	rdb *redis.Client,
+	minioClient *minio.Client,
+	hub *ws.Hub,
+	userID string,
+) {
+	ctx := r.Context()
+	if err := db.RevokeUserAccess(ctx, rdb, userID); err != nil {
+		RespondWithError(w, http.StatusServiceUnavailable, "deletion_unavailable", "Account deletion is temporarily unavailable", err)
+		return
+	}
+
+	if err := db.DeleteUserRedisData(ctx, rdb, userID); err != nil {
+		db.RestoreUserAccess(context.Background(), rdb, userID)
+		RespondWithError(w, http.StatusServiceUnavailable, "deletion_unavailable", "Could not clear active account data", err)
+		return
+	}
+
+	avatarURL, _, err := db.DeleteUserAccount(ctx, database, userID)
+	if err != nil {
+		db.RestoreUserAccess(context.Background(), rdb, userID)
+		RespondWithError(w, http.StatusInternalServerError, "api_error", "Could not delete account", err)
+		return
+	}
+
+	hub.DisconnectUser(userID)
+	if objectName, ok := avatarObjectName(avatarURL); ok {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := minioClient.RemoveObject(cleanupCtx, avatarBucketName, objectName, minio.RemoveObjectOptions{}); err != nil {
+			log.Printf("[WARN] Could not delete avatar for removed account %s: %v", userID, err)
+		}
+	}
+	if err := deleteUserVoiceFiles(userID); err != nil {
+		log.Printf("[WARN] Could not delete voice files for removed account %s: %v", userID, err)
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func UpdateUserLocationHandler(rdb *redis.Client) http.HandlerFunc {
@@ -367,28 +518,25 @@ func UpdateUserLocationHandler(rdb *redis.Client) http.HandlerFunc {
 			return
 		}
 
-		ctx := r.Context()
-		locKey := "live_loc:" + userID
-
-		locData, _ := json.Marshal(map[string]interface{}{
-			"latitude":  payload.Latitude,
-			"longitude": payload.Longitude,
-			"heading":   payload.Heading,
-			"speed":     payload.Speed,
-			"isDnd":     payload.IsDnd,
-			"timestamp": time.Now().Unix(),
-		})
-
-		if err := rdb.Set(ctx, locKey, locData, 15*time.Minute).Err(); err != nil {
-			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to update live location", nil)
+		if payload.Latitude < -90 || payload.Latitude > 90 || payload.Longitude < -180 || payload.Longitude > 180 {
+			RespondWithError(w, http.StatusBadRequest, "invalid_coordinates", "Invalid latitude or longitude", nil)
 			return
 		}
 
-		rdb.GeoAdd(ctx, "drivers_geo", &redis.GeoLocation{
-			Name:      userID,
-			Longitude: payload.Longitude,
-			Latitude:  payload.Latitude,
-		})
+		location := models.LiveLocation{
+			Coordinates: models.Coordinates{
+				Latitude:  payload.Latitude,
+				Longitude: payload.Longitude,
+			},
+			Heading:   payload.Heading,
+			Speed:     payload.Speed,
+			IsDND:     payload.IsDnd,
+			Timestamp: time.Now().Unix(),
+		}
+		if err := db.SaveLiveLocation(r.Context(), rdb, userID, location); err != nil {
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to update live location", nil)
+			return
+		}
 
 		w.WriteHeader(http.StatusNoContent)
 	}
@@ -409,8 +557,14 @@ func LogoutHandler(rdb *redis.Client) http.HandlerFunc {
 			return
 		}
 
-		ctx := context.Background()
-		rdb.Del(ctx, "refresh_token:"+userID)
+		ctx := r.Context()
+		pipe := rdb.TxPipeline()
+		pipe.Del(ctx, "refresh_token:"+userID)
+		pipe.Del(ctx, "live_loc:"+userID)
+		if _, err := pipe.Exec(ctx); err != nil {
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to end session", err)
+			return
+		}
 
 		w.WriteHeader(http.StatusNoContent)
 	}
@@ -587,6 +741,14 @@ func ChangePasswordHandler(database *sql.DB) http.HandlerFunc {
 			RespondWithError(w, http.StatusBadRequest, "bad_request", "Passwords cannot be empty", nil)
 			return
 		}
+		if utf8.RuneCountInString(payload.NewPassword) < 8 {
+			RespondWithError(w, http.StatusBadRequest, "password_too_short", "New password must contain at least 8 characters", nil)
+			return
+		}
+		if len([]byte(payload.NewPassword)) > 72 {
+			RespondWithError(w, http.StatusBadRequest, "password_too_long", "New password is too long", nil)
+			return
+		}
 
 		user, err := db.GetUserByID(database, userID)
 		if err != nil {
@@ -597,6 +759,10 @@ func ChangePasswordHandler(database *sql.DB) http.HandlerFunc {
 		err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(payload.OldPassword))
 		if err != nil {
 			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Incorrect old password", nil)
+			return
+		}
+		if payload.OldPassword == payload.NewPassword {
+			RespondWithError(w, http.StatusConflict, "password_unchanged", "New password must be different from the old password", nil)
 			return
 		}
 

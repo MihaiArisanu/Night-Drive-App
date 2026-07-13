@@ -115,3 +115,16 @@ func (h *Hub) SendToUser(userID string, message []byte) bool {
 		return false
 	}
 }
+
+func (h *Hub) DisconnectUser(userID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	client, ok := h.Users[userID]
+	if !ok {
+		return
+	}
+	delete(h.Users, userID)
+	delete(h.Clients, client)
+	close(client.Send)
+}

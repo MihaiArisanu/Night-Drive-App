@@ -3,6 +3,8 @@ import React
 import React_RCTAppDelegate
 import ReactAppDependencyProvider
 import GoogleMaps
+import livekit_react_native
+import livekit_react_native_webrtc
 
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -15,6 +17,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
   ) -> Bool {
+    LivekitReactNative.setup()
     
     // cheie secure cu bundle id
     GMSServices.provideAPIKey("AIzaSyAABdt7cDdwgG8fc3R3aFSxlHiBMrQmzVY")
