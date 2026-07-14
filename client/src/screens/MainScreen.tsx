@@ -4,7 +4,6 @@ import MapView, { PROVIDER_GOOGLE, Marker, Circle, Polyline } from "react-native
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Search, MapPin, Navigation, Users, LocateFixed, Map, XCircle, Mic } from "lucide-react-native";
 import Geolocation from "react-native-geolocation-service";
-import MapViewDirections from 'react-native-maps-directions';
 import Tts from 'react-native-tts';
 import { useKeepAwake } from '@sayem314/react-native-keep-awake';
 import Toast from 'react-native-toast-message';
@@ -18,8 +17,8 @@ import { RideInviteSheet } from '../components/RideInviteSheet';
 import { SearchBar } from '../components/SearchBar';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 
-import { apiFetch } from '../services/api';
-import { API_BASE_URL, GOOGLE_API_GENERAL_KEY } from '@env';
+import { ApiError, apiFetch } from '../services/api';
+import { API_BASE_URL } from '@env';
 
 import { useLocation } from '../hooks/useLocation';
 import { useRerouting } from '../hooks/useRerouting';
@@ -33,12 +32,15 @@ import { useDislikedAreas } from '../hooks/useDislikedAreas';
 import { useTelemetry } from '../hooks/useTelemetry';
 import { useActiveRouteSync } from '../hooks/useActiveRouteSync';
 import { usePushNotifications } from '../hooks/usePushNotifications';
-import { useZenSessionSync } from '../hooks/useZenSessionSync';
 import { useGroupVoice } from '../hooks/useGroupVoice';
+import { useAvoidanceRoute } from '../hooks/useAvoidanceRoute';
+import { useGroupStopProgress } from '../hooks/useGroupStopProgress';
 
 import { useSettingsStore } from '../store/useSettingsStore';
+import { applyGroupSnapshot, GroupSnapshot } from '../services/groupSession';
 
-const GOOGLE_API_KEY = GOOGLE_API_GENERAL_KEY;
+const FOLLOW_CAMERA_ZOOM = 17.2;
+const IDLE_CAMERA_ZOOM = 17.8;
 
 const globalNotifiedFriends = new Set<string>();
 
@@ -54,6 +56,13 @@ interface InviteData {
   message?: string;
   isLocalInvite?: boolean;
   friendId?: string;
+}
+
+class ZenRouteError extends Error {
+  constructor(public readonly code: string, message: string) {
+    super(message);
+    this.name = 'ZenRouteError';
+  }
 }
 
 export default function MainScreen() {
@@ -79,13 +88,34 @@ export default function MainScreen() {
 
   const [isZenSession, setIsZenSession] = useState(false);
   const [zenDestination, setZenDestination] = useState<{ latitude: number, longitude: number } | null>(null);
+  const [zenRouteOrigin, setZenRouteOrigin] = useState<{ latitude: number, longitude: number } | null>(null);
+  const lastSyncedZenDestination = useRef<string | null>(null);
 
   const autoStartTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastActiveGroupId = useRef<string | null>(null);
+  const lastStartedGroupDestination = useRef<string | null>(null);
 
   const [showRideInvite, setShowRideInvite] = useState(false);
   const [inviteData, setInviteData] = useState<InviteData | null>(null);
+  const [isUpdatingGroupRoute, setIsUpdatingGroupRoute] = useState(false);
 
-  const { isDNDActive, userId, userName, activeGroupId, groupDestination, rendezvousPoint, groupStop, setActiveGroupId, token, setGroupDestination, setGroupStop, removePendingGroupInvite } = useSettingsStore();
+  const {
+    isDNDActive,
+    userId,
+    userName,
+    activeGroupId,
+    groupOwnerId,
+    groupDestination,
+    rendezvousPoint,
+    groupStops,
+    setActiveGroupId,
+    token,
+    setGroupDestination,
+    setGroupVersion,
+    addGroupStop,
+    removePendingGroupInvite,
+  } = useSettingsStore();
+  const isCurrentUserGroupOwner = Boolean(activeGroupId && userId && groupOwnerId === userId);
   const { submitReport, isSubmitting } = useReporting();
   const { events, refetchEvents } = useNearbyEvents(activeCoords.latitude || 44.4268, activeCoords.longitude || 26.1025);
   const { friends } = useNearbyFriends(activeCoords.latitude, activeCoords.longitude, token, activeGroupId);
@@ -121,8 +151,26 @@ export default function MainScreen() {
 
   const currentWaypoints = [];
   if (rendezvousPoint && groupDestination) currentWaypoints.push(rendezvousPoint);
-  if (groupStop) currentWaypoints.push(groupStop);
+  currentWaypoints.push(...groupStops);
   if (stopDestination) currentWaypoints.push(stopDestination);
+
+  const avoidanceRevision = dislikedAreas
+    .map(area => `${area.id}:${area.latitude.toFixed(6)}:${area.longitude.toFixed(6)}`)
+    .sort()
+    .join('|');
+  const normalPlannedRoute = useAvoidanceRoute({
+    enabled: Boolean(currentDestination && routeOrigin && !isZenSession),
+    origin: routeOrigin,
+    destination: currentDestination,
+    waypoints: currentWaypoints,
+    avoidanceRevision,
+  });
+  const zenPlannedRoute = useAvoidanceRoute({
+    enabled: Boolean(isZenSession && zenDestination && zenRouteOrigin),
+    origin: zenRouteOrigin,
+    destination: zenDestination,
+    avoidanceRevision,
+  });
 
   const panY = useRef(new Animated.Value(0)).current;
   const cancelThreshold = -120;
@@ -208,10 +256,106 @@ export default function MainScreen() {
 
   useTelemetry(activeCoords.latitude, activeCoords.longitude, speedMs);
   useActiveRouteSync(routeCoordinates, isNavigating);
+  useGroupStopProgress(activeGroupId, groupStops, activeCoords.latitude);
   usePushNotifications();
 
-  useZenSessionSync(isZenSession, activeCoords.latitude, activeCoords.longitude, () => { });
+  useEffect(() => {
+    const previousGroupId = lastActiveGroupId.current;
+    const groupChanged = previousGroupId !== activeGroupId;
+    lastActiveGroupId.current = activeGroupId;
 
+    if (groupChanged) {
+      if (autoStartTimer.current) clearTimeout(autoStartTimer.current);
+      setDestination(null);
+      setStopDestination(null);
+      setRouteCoordinates([]);
+      setRouteInfo(null);
+      setIsNavigating(false);
+      resetRouteOrigin();
+      lastStartedGroupDestination.current = null;
+
+      if (isZenSession) {
+        setIsZenSession(false);
+        setZenDestination(null);
+        setZenRouteOrigin(null);
+        lastSyncedZenDestination.current = null;
+        fetch(`${API_BASE_URL}/routes/zen/stop`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` },
+        }).catch(() => { });
+      }
+    }
+
+    if (!activeGroupId || !groupDestination || activeCoords.latitude === 0) {
+      return;
+    }
+
+    const destinationKey = [
+      activeGroupId,
+      groupDestination.latitude.toFixed(6),
+      groupDestination.longitude.toFixed(6),
+    ].join(':');
+    if (lastStartedGroupDestination.current === destinationKey) {
+      return;
+    }
+    lastStartedGroupDestination.current = destinationKey;
+
+    if (autoStartTimer.current) clearTimeout(autoStartTimer.current);
+    setIsNavigating(false);
+    setRouteCoordinates([]);
+    initRouteOrigin(activeCoords);
+    setIsSearching(false);
+    autoStartTimer.current = setTimeout(() => setIsNavigating(true), 5000);
+  }, [
+    activeCoords,
+    activeGroupId,
+    groupDestination,
+    initRouteOrigin,
+    isZenSession,
+    resetRouteOrigin,
+    token,
+  ]);
+
+  useEffect(() => {
+    if (!normalPlannedRoute.route) return;
+
+    setRouteCoordinates(normalPlannedRoute.route.coordinates);
+    setRouteInfo({
+      distance: normalPlannedRoute.route.distance,
+      duration: normalPlannedRoute.route.duration,
+    });
+    finishRerouting();
+  }, [normalPlannedRoute.route, finishRerouting]);
+
+  useEffect(() => {
+    if (normalPlannedRoute.isLoading) {
+      setRouteCoordinates([]);
+    }
+  }, [normalPlannedRoute.isLoading]);
+
+  useEffect(() => {
+    if (!zenPlannedRoute.route) return;
+
+    setRouteInfo({
+      distance: zenPlannedRoute.route.distance,
+      duration: zenPlannedRoute.route.duration,
+    });
+  }, [zenPlannedRoute.route]);
+
+  useEffect(() => {
+    const routeError = normalPlannedRoute.error || zenPlannedRoute.error;
+    if (!routeError) return;
+
+    const noAvoidingRoute = routeError instanceof ApiError
+      && routeError.code === 'no_route_around_dislikes';
+    Toast.show({
+      type: 'error',
+      text1: noAvoidingRoute ? 'Blocked street cannot be avoided' : 'Route unavailable',
+      text2: noAvoidingRoute
+        ? 'Remove the blocked area or choose another destination.'
+        : 'Please try again in a moment.',
+    });
+  }, [normalPlannedRoute.error, zenPlannedRoute.error]);
 
   const handleAcceptRide = async () => {
     if (inviteData?.isLocalInvite) {
@@ -237,27 +381,22 @@ export default function MainScreen() {
     }
 
     try {
-      const groupData = await apiFetch(`/groups/${inviteData.groupId}/join`, { method: 'POST' });
+      const groupData = await apiFetch(`/groups/${inviteData.groupId}/join`, { method: 'POST' }) as GroupSnapshot;
 
-      setActiveGroupId(inviteData.groupId);
+      if (groupData?.ownerId && groupData?.status) {
+        applyGroupSnapshot(groupData);
+      } else {
+        setActiveGroupId(inviteData.groupId);
+      }
       removePendingGroupInvite(inviteData.inviteId || inviteData.groupId);
       setShowRideInvite(false);
 
-      if (groupData.destination) {
-        setGroupDestination(groupData.destination);
-        if (groupData.stop) setGroupStop(groupData.stop);
-        if (isZenSession) {
-          setIsZenSession(false);
-          setZenDestination(null);
-        }
-
-        startNavigationProtocol();
-      }
-
-      else if (isZenSession && groupData.allZen) {
-        console.log("Joined a shared Zen session");
-      } else if (!currentDestination && !isZenSession) {
-        toggleZenSession();
+      if (!groupData?.destination) {
+        Toast.show({
+          type: 'info',
+          text1: 'Group Ride started',
+          text2: 'Waiting for the group owner to choose the destination.',
+        });
       }
 
     } catch (error) {
@@ -358,7 +497,7 @@ export default function MainScreen() {
         center: activeCoords,
         heading: isDriving ? heading : 0,
         pitch: 0,
-        zoom: isDriving || isNavigating || isZenSession ? 20.5 : 18.5,
+        zoom: isDriving || isNavigating || isZenSession ? FOLLOW_CAMERA_ZOOM : IDLE_CAMERA_ZOOM,
       }, { duration: 1000 });
     }
   }, [activeCoords, heading, speed, isSearching, currentDestination, isNavigating, isZenSession]);
@@ -374,6 +513,7 @@ export default function MainScreen() {
     resetRouteOrigin();
     setRouteCoordinates([]);
     setZenDestination(null);
+    setZenRouteOrigin(null);
     setIsNavigating(false);
     setIsSearching(false);
     setSearchSessionId(prev => prev + 1);
@@ -382,6 +522,7 @@ export default function MainScreen() {
 
     if (isZenSession) {
       setIsZenSession(false);
+      lastSyncedZenDestination.current = null;
       fetch(`${API_BASE_URL}/routes/zen/stop`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } }).catch(() => { });
     }
     if (autoStartTimer.current) clearTimeout(autoStartTimer.current);
@@ -406,7 +547,7 @@ export default function MainScreen() {
 
   const sendGroupStop = async (groupId: string, coords: { latitude: number, longitude: number }, name: string) => {
     try {
-      await apiFetch(`/groups/${groupId}/stop`, {
+      const update = await apiFetch(`/groups/${groupId}/stop`, {
         method: 'POST',
         body: JSON.stringify({
           latitude: coords.latitude,
@@ -414,14 +555,30 @@ export default function MainScreen() {
           name: name
         })
       });
-      console.log("Group stop shared successfully!");
+      if (update?.appliesToCurrentUser && update?.stop?.id) {
+        addGroupStop(update.stop);
+      }
+      if (typeof update?.version === 'number') {
+        setGroupVersion(update.version);
+      }
+      if (update?.appliesToCurrentUser === false) {
+        Toast.show({
+          type: 'info',
+          text1: 'Stop shared with the group',
+          text2: 'It is already behind you, so your route stays unchanged.',
+        });
+      }
+      return true;
     } catch (error) {
       console.error("Error sharing group stop:", error);
+      const message = error instanceof Error ? error.message : 'Please try again.';
+      Alert.alert('Could not add group stop', message);
+      return false;
     }
   };
 
   const handlePlaceSelect = (destCoords: { latitude: number, longitude: number }, name: string) => {
-    if (destination) {
+    if (activeGroupId || destination) {
       setPendingSearch({ coords: destCoords, name });
       setIsSearching(false);
     } else {
@@ -430,24 +587,64 @@ export default function MainScreen() {
     }
   };
 
-  const handleSetNewDestination = () => {
+  const handleSetNewDestination = async () => {
     if (!pendingSearch) return;
+
+    if (activeGroupId) {
+      if (!isCurrentUserGroupOwner || isUpdatingGroupRoute) {
+        Alert.alert('Owner action required', 'Only the group owner can change the final destination.');
+        return;
+      }
+
+      setIsUpdatingGroupRoute(true);
+      try {
+        const update = await apiFetch(`/groups/${activeGroupId}/destination`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            latitude: pendingSearch.coords.latitude,
+            longitude: pendingSearch.coords.longitude,
+            name: pendingSearch.name,
+          }),
+        });
+        setGroupDestination(update.destination);
+        setGroupVersion(update.version);
+        setPendingSearch(null);
+        Toast.show({
+          type: 'success',
+          text1: 'Group destination updated',
+          text2: update.destination?.name || pendingSearch.name,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Please try again.';
+        Alert.alert('Could not update group destination', message);
+      } finally {
+        setIsUpdatingGroupRoute(false);
+      }
+      return;
+    }
+
     setStopDestination(null);
     setDestination(pendingSearch.coords);
     setPendingSearch(null);
     startNavigationProtocol();
   };
 
-  const handleAddStop = () => {
+  const handleAddStop = async () => {
     if (!pendingSearch) return;
 
     if (activeGroupId) {
-      sendGroupStop(activeGroupId, pendingSearch.coords, pendingSearch.name);
+      if (isUpdatingGroupRoute) return;
+      setIsUpdatingGroupRoute(true);
+      const succeeded = await sendGroupStop(activeGroupId, pendingSearch.coords, pendingSearch.name);
+      setIsUpdatingGroupRoute(false);
+      if (!succeeded) return;
     } else {
       setStopDestination(pendingSearch.coords);
     }
     setPendingSearch(null);
-    startNavigationProtocol();
+    if (currentDestination) {
+      startNavigationProtocol();
+    }
   };
 
   const startNavigationProtocol = () => {
@@ -466,9 +663,9 @@ export default function MainScreen() {
     if (activeCoords.latitude !== 0 && mapRef.current) {
       mapRef.current.animateCamera({
         center: activeCoords,
-        heading: heading,
+        heading: speed > 5 ? heading : 0,
         pitch: 0,
-        zoom: 20.5,
+        zoom: isNavigating || isZenSession ? FOLLOW_CAMERA_ZOOM : IDLE_CAMERA_ZOOM,
       }, { duration: 1000 });
     }
   };
@@ -490,18 +687,40 @@ export default function MainScreen() {
 
   const handleDislikeArea = async () => {
     if (!selectedLocation) return;
-    const success = await addDislike(selectedLocation.latitude, selectedLocation.longitude, "User Manual Block");
+    const success = await addDislike(
+      selectedLocation.latitude,
+      selectedLocation.longitude,
+      "User Manual Block",
+      'area',
+    );
     if (success) {
       setIsReportModalVisible(false);
     }
+    Toast.show({
+      type: success ? 'success' : 'error',
+      text1: success ? 'Area blocked' : 'Could not block area',
+      text2: success
+        ? 'Normal and Zen routes will avoid it.'
+        : 'The area may already be blocked. Please try again.',
+    });
   };
 
   const toggleZenSession = async () => {
+    if (activeGroupId) {
+      Toast.show({
+        type: 'info',
+        text1: 'Group navigation is active',
+        text2: 'The group owner chooses the shared final destination.',
+      });
+      return;
+    }
     const newZenState = !isZenSession;
     setIsZenSession(newZenState);
 
     if (newZenState) {
       setZenDestination(null);
+      setZenRouteOrigin(null);
+      lastSyncedZenDestination.current = null;
       try {
         const response = await fetch(`${API_BASE_URL}/routes/zen/start`, {
           method: 'POST',
@@ -518,16 +737,44 @@ export default function MainScreen() {
 
         const text = await response.text();
         if (!response.ok) {
-          throw new Error(`ZenSession API Error ${response.status}: ${text}`);
+          let code = 'safe_route_unavailable';
+          let message = `ZenSession API Error ${response.status}`;
+          try {
+            const errorPayload = JSON.parse(text);
+            code = errorPayload.error || code;
+            message = errorPayload.message || message;
+          } catch {
+            // Preserve the fallback error when an upstream proxy returns HTML.
+          }
+          throw new ZenRouteError(code, message);
         }
         const data = JSON.parse(text);
         if (data.next_lat && data.next_lng) {
+          setZenRouteOrigin(activeCoords);
           setZenDestination({ latitude: data.next_lat, longitude: data.next_lng });
           setIsNavigating(true);
         }
       } catch (error) {
         console.error("ZenSession failed to start:", error);
         setIsZenSession(false);
+
+        const isRoadDataUnavailable = error instanceof ZenRouteError
+          && error.code === 'road_data_unavailable';
+        const isMissingCorridor = error instanceof ZenRouteError
+          && error.code === 'no_connected_corridor';
+        Toast.show({
+          type: 'error',
+          text1: isRoadDataUnavailable
+            ? 'Road data temporarily unavailable'
+            : isMissingCorridor
+              ? 'No connected road corridor nearby'
+              : 'Zen route unavailable',
+          text2: isRoadDataUnavailable
+            ? 'Please try Zen again in a moment.'
+            : isMissingCorridor
+              ? 'Move closer to a public road and try again.'
+              : 'Please try again.',
+        });
       }
     } else {
       cancelNavigation();
@@ -536,6 +783,8 @@ export default function MainScreen() {
 
   useEffect(() => {
     if (!isZenSession || !zenDestination || !token || activeCoords.latitude === 0) return;
+
+    const destinationKey = `${zenDestination.latitude.toFixed(6)}:${zenDestination.longitude.toFixed(6)}`;
 
     const distM = (() => {
       const R = 6371000;
@@ -547,21 +796,37 @@ export default function MainScreen() {
       return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     })();
 
-    if (distM < 500) {
+    if (distM < 500 && lastSyncedZenDestination.current !== destinationKey) {
+      lastSyncedZenDestination.current = destinationKey;
       fetch(`${API_BASE_URL}/routes/zen/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ latitude: activeCoords.latitude, longitude: activeCoords.longitude, heading: heading ?? 0 })
+        body: JSON.stringify({
+          latitude: activeCoords.latitude,
+          longitude: activeCoords.longitude,
+          heading: heading ?? 0,
+          expected_waypoint_lat: zenDestination.latitude,
+          expected_waypoint_lng: zenDestination.longitude,
+        })
       })
-        .then(r => r.json())
+        .then(async response => {
+          if (!response.ok) {
+            throw new Error(`Zen sync failed with status ${response.status}`);
+          }
+          return response.json();
+        })
         .then(data => {
-          if (data.status === 'extended' && data.next_lat && data.next_lng) {
+          if ((data.status === 'extended' || data.status === 'stale') && data.next_lat && data.next_lng) {
+            setZenRouteOrigin(activeCoords);
             setZenDestination({ latitude: data.next_lat, longitude: data.next_lng });
           }
         })
-        .catch(() => { });
+        .catch(error => {
+          lastSyncedZenDestination.current = null;
+          console.warn('Zen waypoint sync failed:', error);
+        });
     }
-  }, [activeCoords, isZenSession, zenDestination, token]);
+  }, [activeCoords, heading, isZenSession, zenDestination, token]);
 
 
   const formatDistance = (dist: number) => dist < 1 ? `${(dist * 1000).toFixed(0)} m` : `${dist.toFixed(1)} km`;
@@ -589,6 +854,8 @@ export default function MainScreen() {
             showsUserLocation={false}
             showsMyLocationButton={false}
             showsCompass={false}
+            pitchEnabled={false}
+            rotateEnabled={false}
             loadingEnabled={true}
             mapPadding={{ top: 0, right: 0, bottom: 120, left: 0 }}
             onLongPress={handleMapLongPress}
@@ -642,13 +909,25 @@ export default function MainScreen() {
             ))}
 
             {dislikedAreas?.map((area) => (
-              <Circle
-                key={area.id}
-                center={{ latitude: area.latitude, longitude: area.longitude }}
-                radius={200}
-                strokeColor="rgba(239, 68, 68, 0.5)"
-                fillColor="rgba(239, 68, 68, 0.2)"
-              />
+              <React.Fragment key={area.id}>
+                {area.paths?.length ? area.paths.map((path, pathIndex) => (
+                  <Polyline
+                    key={`${area.id}:path:${pathIndex}`}
+                    coordinates={path}
+                    strokeWidth={3}
+                    strokeColor="rgba(239, 68, 68, 0.38)"
+                  />
+                )) : (
+                <Circle
+                  key={`${area.id}:area`}
+                  center={{ latitude: area.latitude, longitude: area.longitude }}
+                  radius={area.avoidance_radius_meters || 200}
+                  strokeWidth={1}
+                  strokeColor="rgba(239, 68, 68, 0.3)"
+                  fillColor="rgba(239, 68, 68, 0.015)"
+                />
+                )}
+              </React.Fragment>
             ))}
 
             {rendezvousPoint && (
@@ -667,22 +946,19 @@ export default function MainScreen() {
               </Marker>
             )}
 
-            {currentDestination && routeOrigin && !isZenSession && (
-              <MapViewDirections
-                origin={routeOrigin}
-                destination={currentDestination}
-                waypoints={currentWaypoints.length > 0 ? currentWaypoints : undefined}
-                apikey={GOOGLE_API_KEY}
+            {groupStops.map((stop) => (
+              <Marker key={stop.id} coordinate={stop} anchor={{ x: 0.5, y: 1 }}>
+                <View style={styles.stopDestinationMarker}>
+                  <MapPin color="#FFF" size={20} />
+                </View>
+              </Marker>
+            ))}
+
+            {currentDestination && routeOrigin && !isZenSession && normalPlannedRoute.route && (
+              <Polyline
+                coordinates={normalPlannedRoute.route.coordinates}
                 strokeWidth={8}
                 strokeColor="#8A2BE2"
-                mode="DRIVING"
-                precision="high"
-                optimizeWaypoints={true}
-                onReady={(result) => {
-                  setRouteCoordinates(result.coordinates);
-                  setRouteInfo({ distance: result.distance, duration: result.duration });
-                  finishRerouting();
-                }}
               />
             )}
 
@@ -694,18 +970,11 @@ export default function MainScreen() {
               </Marker>
             )}
 
-            {isZenSession && zenDestination && (
-              <MapViewDirections
-                origin={activeCoords}
-                destination={zenDestination}
-                apikey={GOOGLE_API_KEY}
+            {isZenSession && zenDestination && zenPlannedRoute.route && (
+              <Polyline
+                coordinates={zenPlannedRoute.route.coordinates}
                 strokeWidth={8}
                 strokeColor="#10B981"
-                mode="DRIVING"
-                precision="high"
-                onReady={(result) => {
-                  setRouteInfo({ distance: result.distance, duration: result.duration });
-                }}
               />
             )}
           </MapView>
@@ -793,17 +1062,33 @@ export default function MainScreen() {
       <Modal visible={!!pendingSearch} transparent animationType="slide">
         <View style={styles.actionSheetOverlay}>
           <View style={styles.actionSheetContent}>
-            <Text style={styles.actionSheetTitle}>Active Route Existing</Text>
+            <Text style={styles.actionSheetTitle}>
+              {activeGroupId ? 'Update Group Route' : 'Active Route Existing'}
+            </Text>
             <Text style={styles.actionSheetSubtitle}>What do you want to do with {pendingSearch?.name}?</Text>
 
-            <TouchableOpacity style={styles.actionBtnPrimary} onPress={handleSetNewDestination}>
-              <Map color="#FFF" size={24} />
-              <Text style={styles.actionBtnTextPrimary}>New Destination (Replace)</Text>
-            </TouchableOpacity>
+            {(!activeGroupId || isCurrentUserGroupOwner) && (
+              <TouchableOpacity
+                style={[styles.actionBtnPrimary, isUpdatingGroupRoute && { opacity: 0.55 }]}
+                onPress={handleSetNewDestination}
+                disabled={isUpdatingGroupRoute}
+              >
+                <Map color="#FFF" size={24} />
+                <Text style={styles.actionBtnTextPrimary}>
+                  {activeGroupId ? 'Set Final Group Destination' : 'New Destination (Replace)'}
+                </Text>
+              </TouchableOpacity>
+            )}
 
-            <TouchableOpacity style={styles.actionBtnSecondary} onPress={handleAddStop}>
+            <TouchableOpacity
+              style={[styles.actionBtnSecondary, isUpdatingGroupRoute && { opacity: 0.55 }]}
+              onPress={handleAddStop}
+              disabled={isUpdatingGroupRoute}
+            >
               <MapPin color="#A855F7" size={24} />
-              <Text style={styles.actionBtnTextSecondary}>Add as Stop</Text>
+              <Text style={styles.actionBtnTextSecondary}>
+                {activeGroupId ? 'Add Group Stop' : 'Add as Stop'}
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.actionBtnCancel} onPress={() => setPendingSearch(null)}>

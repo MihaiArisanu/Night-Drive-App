@@ -15,9 +15,13 @@ export default function DislikedStreetsScreen({ navigation }: any) {
 
     const handleSaveEdit = async () => {
         if (editingArea && editReason.trim()) {
-            if (updateDislike) await updateDislike(editingArea.id, editReason); 
-            setEditingArea(null);
-            Toast.show({ type: 'error', text1: 'Updated', text2: 'Blocked street reason changed.' });
+            const success = await updateDislike(editingArea.id, editReason);
+            if (success) {
+                setEditingArea(null);
+                Toast.show({ type: 'success', text1: 'Updated', text2: 'Blocked street name changed.' });
+            } else {
+                Toast.show({ type: 'error', text1: 'Update failed', text2: 'Please try again.' });
+            }
         }
     };
 
@@ -34,18 +38,21 @@ export default function DislikedStreetsScreen({ navigation }: any) {
             <View style={styles.searchContainer}>
                 <SearchBar
                     isCompact={true}
+                    userCoords={null}
                     searchFilter="address"
                     placeholder="Search street to block..."
                     onClose={() => Keyboard.dismiss()}
                     onPlaceSelect={async (coords, name) => {
                         setIsAdding(true);
-                        await addDislike(coords.latitude, coords.longitude, name);
+                        const success = await addDislike(coords.latitude, coords.longitude, name);
                         setIsAdding(false);
 
                         Toast.show({
-                            type: 'error',
-                            text1: 'Street Blocked!',
-                            text2: 'Routings will now avoid this area.',
+                            type: success ? 'success' : 'error',
+                            text1: success ? 'Street blocked' : 'Could not block street',
+                            text2: success
+                                ? 'Normal and Zen routes will avoid the entire street.'
+                                : 'The street may already be blocked. Please try again.',
                         });
                     }}
                 />
@@ -68,12 +75,22 @@ export default function DislikedStreetsScreen({ navigation }: any) {
                             <View style={styles.redDot} />
                             <View style={styles.info}>
                                 <Text style={styles.placeName}>{area.reason || "Zonă Blocată"}</Text>
-                                <Text style={styles.placeAddress}>Ruta va evita această zonă</Text>
+                                <Text style={styles.placeAddress}>
+                                    {area.coverage_type === 'street'
+                                        ? 'Entire street will be avoided'
+                                        : area.coverage_type === 'segment'
+                                            ? 'Selected street segment will be avoided'
+                                            : 'Routes will avoid this area'}
+                                </Text>
                             </View>
                         </View>
-                        <TouchableOpacity onPress={() => {
-                            removeDislike(area.id);
-                            Toast.show({ type: 'success', text1: 'Unblocked', text2: 'Street removed from blocklist.' });
+                        <TouchableOpacity onPress={async () => {
+                            const success = await removeDislike(area.id);
+                            Toast.show({
+                                type: success ? 'success' : 'error',
+                                text1: success ? 'Unblocked' : 'Could not unblock street',
+                                text2: success ? 'Street removed from blocklist.' : 'Please try again.',
+                            });
                         }}>
                             <Trash2 color="#666" size={20} />
                         </TouchableOpacity>

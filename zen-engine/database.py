@@ -1,4 +1,5 @@
 import os
+import json
 import asyncpg
 from typing import List
 
@@ -7,6 +8,7 @@ from models import HistoryRecord, ExclusionZone
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 RADIUS_METERS = 10000  
+EXCLUSION_SEARCH_RADIUS_METERS = 15000
 
 async def get_db_pool():
     if not DATABASE_URL:
@@ -30,12 +32,85 @@ async def fetch_history(pool, user_id: str, lat: float, lng: float) -> List[Hist
         records = await conn.fetch(query, user_id, lng, lat, RADIUS_METERS)
         return [HistoryRecord(**dict(r)) for r in records]
 
-async def fetch_exclusion_zones(pool, user_id: str) -> List[ExclusionZone]:
-    query = """
-        SELECT ST_Y(location::geometry) AS latitude, ST_X(location::geometry) AS longitude FROM disliked_areas WHERE user_id = $1
-        UNION ALL
-        SELECT ST_Y(location::geometry) AS latitude, ST_X(location::geometry) AS longitude FROM events WHERE event_type IN ('pothole', 'accident', 'police')
+async def fetch_exclusion_zones(
+    pool,
+    user_id: str,
+    lat: float,
+    lng: float,
+) -> List[ExclusionZone]:
+    disliked_query = """
+        SELECT
+            ST_Y(location::geometry) AS latitude,
+            ST_X(location::geometry) AS longitude,
+            avoidance_radius_meters,
+            coverage_type,
+            COALESCE(ST_AsGeoJSON(street_geometry), '') AS geometry_json
+        FROM disliked_areas
+        WHERE user_id = $1
+          AND (
+              ST_DWithin(
+                  location,
+                  ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography,
+                  $4
+              )
+              OR (
+                  street_geometry IS NOT NULL
+                  AND ST_DWithin(
+                      street_geometry,
+                      ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography,
+                      $4
+                  )
+              )
+          )
+    """
+    events_query = """
+        SELECT
+            ST_Y(location::geometry) AS latitude,
+            ST_X(location::geometry) AS longitude,
+            CASE
+                WHEN event_type = 'accident' THEN 200.0
+                WHEN event_type = 'pothole' THEN 100.0
+                ELSE 120.0
+            END::double precision AS radius_meters,
+            'area'::text AS coverage_type
+        FROM events
+        WHERE event_type IN ('pothole', 'accident', 'police')
+          AND expires_at > NOW()
+          AND ST_DWithin(
+              location,
+              ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
+              $3
+          )
     """
     async with pool.acquire() as conn:
-        records = await conn.fetch(query, user_id)
-        return [ExclusionZone(**dict(r)) for r in records]
+        disliked_records = await conn.fetch(
+            disliked_query,
+            user_id,
+            lng,
+            lat,
+            EXCLUSION_SEARCH_RADIUS_METERS,
+        )
+        event_records = await conn.fetch(
+            events_query,
+            lng,
+            lat,
+            EXCLUSION_SEARCH_RADIUS_METERS,
+        )
+
+    zones = []
+    for record in disliked_records:
+        values = dict(record)
+        geometry_json = values.pop("geometry_json", "")
+        paths = []
+        if geometry_json:
+            geometry = json.loads(geometry_json)
+            if geometry.get("type") == "MultiLineString":
+                paths = [
+                    [(float(point[1]), float(point[0])) for point in line]
+                    for line in geometry.get("coordinates", [])
+                    if len(line) >= 2
+                ]
+        zones.append(ExclusionZone(**values, paths=paths))
+
+    zones.extend(ExclusionZone(**dict(record)) for record in event_records)
+    return zones

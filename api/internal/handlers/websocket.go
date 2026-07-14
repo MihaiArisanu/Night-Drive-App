@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -40,7 +41,7 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-func CreateWebSocketTicketHandler(rdb *redis.Client) http.HandlerFunc {
+func CreateWebSocketTicketHandler(database *sql.DB, rdb *redis.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
@@ -81,7 +82,7 @@ func CreateWebSocketTicketHandler(rdb *redis.Client) http.HandlerFunc {
 				RespondWithError(w, http.StatusBadRequest, "invalid_group_id", "Invalid group ID", nil)
 				return
 			}
-			_, status, _, _, err := db.GetRideGroupState(r.Context(), rdb, request.GroupID, userID)
+			_, status, _, _, err := db.GetRideGroupState(r.Context(), database, request.GroupID, userID)
 			switch {
 			case err == nil && status == "active":
 				authorizedGroupID = request.GroupID

@@ -6,6 +6,10 @@ export interface DislikedArea {
     latitude: number;
     longitude: number;
     reason: string;
+    coverage_type: 'area' | 'street' | 'segment';
+    street_name?: string;
+    avoidance_radius_meters: number;
+    paths?: Array<Array<{ latitude: number; longitude: number }>>;
     created_at?: string;
 }
 
@@ -28,11 +32,21 @@ export function useDislikedAreas() {
         fetchDislikes();
     }, []);
 
-    const addDislike = async (latitude: number, longitude: number, reason: string) => {
+    const addDislike = async (
+        latitude: number,
+        longitude: number,
+        reason: string,
+        coverageType: 'area' | 'street' = 'street',
+    ) => {
         try {
             await apiFetch('/users/dislikes', {
                 method: 'POST',
-                body: JSON.stringify({ latitude, longitude, reason })
+                body: JSON.stringify({
+                    latitude,
+                    longitude,
+                    reason,
+                    coverage_type: coverageType,
+                })
             });
             await fetchDislikes();
             return true;
@@ -62,8 +76,10 @@ export function useDislikedAreas() {
                 method: 'DELETE'
             });
             await fetchDislikes();
+            return true;
         } catch (error) {
             console.error("Failed to remove dislike:", error);
+            return false;
         }
     };
 

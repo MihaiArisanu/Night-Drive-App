@@ -12,12 +12,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/livekit/protocol/auth"
 	"github.com/livekit/protocol/livekit"
-	"github.com/redis/go-redis/v9"
 )
 
 const voiceTokenTTL = 10 * time.Minute
 
-func GroupVoiceTokenHandler(database *sql.DB, rdb *redis.Client) http.HandlerFunc {
+func GroupVoiceTokenHandler(database *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
@@ -34,7 +33,7 @@ func GroupVoiceTokenHandler(database *sql.DB, rdb *redis.Client) http.HandlerFun
 			return
 		}
 
-		_, status, _, _, err := db.GetRideGroupState(r.Context(), rdb, groupID, userID)
+		_, status, _, _, err := db.GetRideGroupState(r.Context(), database, groupID, userID)
 		if err != nil {
 			switch {
 			case errors.Is(err, db.ErrGroupNotFound):

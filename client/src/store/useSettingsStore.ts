@@ -16,10 +16,17 @@ export interface GroupInvite {
     createdAt?: string;
 }
 
-interface LocationPoint {
+export interface LocationPoint {
     latitude: number;
     longitude: number;
     name?: string;
+}
+
+export interface GroupStop extends LocationPoint {
+    id: string;
+    groupId: string;
+    addedBy?: string;
+    createdAt: string;
 }
 
 interface SettingsState {
@@ -29,11 +36,13 @@ interface SettingsState {
     token: string | null;
     activeGroupId: string | null;
     draftGroupId: string | null;
+    groupOwnerId: string | null;
+    groupVersion: number;
     groupMembers: GroupMember[];
     pendingGroupInvites: GroupInvite[];
     groupDestination: LocationPoint | null;
     rendezvousPoint: LocationPoint | null;
-    groupStop: LocationPoint | null;
+    groupStops: GroupStop[];
     groupRoutePolyline: string | null;
 
     setIsDNDActive: (value: boolean) => void;
@@ -42,13 +51,17 @@ interface SettingsState {
     setToken: (value: string | null) => void;
     setActiveGroupId: (value: string | null) => void;
     setDraftGroupId: (value: string | null) => void;
+    setGroupOwnerId: (value: string | null) => void;
+    setGroupVersion: (value: number) => void;
     setGroupMembers: (value: GroupMember[]) => void;
     setPendingGroupInvites: (value: GroupInvite[]) => void;
     addPendingGroupInvite: (value: GroupInvite) => void;
     removePendingGroupInvite: (inviteIdOrGroupId: string) => void;
     setGroupDestination: (value: LocationPoint | null) => void;
     setRendezvousPoint: (value: LocationPoint | null) => void;
-    setGroupStop: (value: LocationPoint | null) => void;
+    setGroupStops: (value: GroupStop[]) => void;
+    addGroupStop: (value: GroupStop) => void;
+    removeGroupStop: (stopId: string) => void;
     setGroupRoutePolyline: (polyline: string | null) => void;
     clearGroupState: () => void;
 
@@ -62,11 +75,13 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     token: null,
     activeGroupId: null,
     draftGroupId: null,
+    groupOwnerId: null,
+    groupVersion: 0,
     groupMembers: [],
     pendingGroupInvites: [],
     groupDestination: null,
     rendezvousPoint: null,
-    groupStop: null,
+    groupStops: [],
     groupRoutePolyline: null,
 
     setIsDNDActive: (value) => set({ isDNDActive: value }),
@@ -75,6 +90,8 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     setToken: (value) => set({ token: value }),
     setActiveGroupId: (value) => set({ activeGroupId: value }),
     setDraftGroupId: (value) => set({ draftGroupId: value }),
+    setGroupOwnerId: (value) => set({ groupOwnerId: value }),
+    setGroupVersion: (value) => set({ groupVersion: value }),
     setGroupMembers: (value) => set({ groupMembers: value }),
     setPendingGroupInvites: (value) => set({ pendingGroupInvites: value }),
     addPendingGroupInvite: (value) => set((state) => ({
@@ -92,20 +109,29 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     })),
     setGroupDestination: (value) => set({ groupDestination: value }),
     setRendezvousPoint: (value) => set({ rendezvousPoint: value }),
-    setGroupStop: (value) => set({ groupStop: value }),
+    setGroupStops: (value) => set({ groupStops: value }),
+    addGroupStop: (value) => set((state) => ({
+        groupStops: [...state.groupStops.filter((stop) => stop.id !== value.id), value]
+            .sort((first, second) => first.createdAt.localeCompare(second.createdAt)),
+    })),
+    removeGroupStop: (stopId) => set((state) => ({
+        groupStops: state.groupStops.filter((stop) => stop.id !== stopId),
+    })),
     setGroupRoutePolyline: (value) => set({ groupRoutePolyline: value }),
     clearGroupState: () => set({
         activeGroupId: null,
         draftGroupId: null,
+        groupOwnerId: null,
+        groupVersion: 0,
         groupMembers: [],
         groupDestination: null,
         rendezvousPoint: null,
-        groupStop: null,
+        groupStops: [],
         groupRoutePolyline: null,
     }),
 
     clearSettings: () => set({
-        userId: null, userName: null, token: null, activeGroupId: null, draftGroupId: null,
-        groupMembers: [], pendingGroupInvites: [], groupDestination: null, rendezvousPoint: null, groupStop: null, groupRoutePolyline: null
+        userId: null, userName: null, token: null, activeGroupId: null, draftGroupId: null, groupOwnerId: null, groupVersion: 0,
+        groupMembers: [], pendingGroupInvites: [], groupDestination: null, rendezvousPoint: null, groupStops: [], groupRoutePolyline: null
     }),
 }));

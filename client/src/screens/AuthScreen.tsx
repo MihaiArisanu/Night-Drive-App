@@ -3,6 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingVi
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ApiError, apiFetch, AuthStorage } from '../services/api';
 import { useSettingsStore } from '../store/useSettingsStore';
+import { restoreAuthenticatedSession } from '../services/sessionBootstrap';
 
 const generateHexTag = (): string => {
     return Math.floor(Math.random() * 0xFFFF).toString(16).toUpperCase().padStart(4, '0');
@@ -44,6 +45,12 @@ export default function AuthScreen({ route, navigation }: any) {
                 await AuthStorage.saveTokens(data.access_token, data.refresh_token);
                 useSettingsStore.getState().setToken(data.access_token);
                 useSettingsStore.getState().setUserId(data.user_id);
+
+                try {
+                    await restoreAuthenticatedSession();
+                } catch (error) {
+                    console.warn('Could not fully restore the current session:', error);
+                }
 
                 navigation.replace('Main');
             } else {

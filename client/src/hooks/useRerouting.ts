@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 interface Coords {
     latitude: number;
@@ -49,11 +49,11 @@ export const useRerouting = (
         }
     }, [currentCoords, isNavigating, routeCoordinates, isRerouting, toleranceMeters]);
 
-    const finishRerouting = () => setIsRerouting(false);
+    const finishRerouting = useCallback(() => setIsRerouting(false), []);
 
-    const resetRouteOrigin = () => setRouteOrigin(null);
+    const resetRouteOrigin = useCallback(() => setRouteOrigin(null), []);
 
-    const initRouteOrigin = (coords: Coords) => setRouteOrigin(coords);
+    const initRouteOrigin = useCallback((coords: Coords) => setRouteOrigin(coords), []);
 
     return {
         isRerouting,

@@ -326,7 +326,7 @@ func GetNearbyFriendsHandler(database *sql.DB, rdb *redis.Client) http.HandlerFu
 				return
 			}
 
-			_, status, memberIDs, _, groupErr := db.GetRideGroupState(r.Context(), rdb, groupID, userID)
+			_, status, memberIDs, _, groupErr := db.GetRideGroupState(r.Context(), database, groupID, userID)
 			switch {
 			case groupErr == nil && status == "active":
 				otherMemberIDs := make([]string, 0, len(memberIDs))

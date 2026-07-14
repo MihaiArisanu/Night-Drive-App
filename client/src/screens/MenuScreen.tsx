@@ -11,12 +11,14 @@ import { useFriendRequests, FriendRequestResult } from "../hooks/useFriendReques
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import { apiFetch, AuthStorage } from '../services/api';
+import { GroupSnapshot } from '../services/groupSession';
 
 export default function MenuScreen({ navigation }: any) {
   const { currentUser, refetchUser } = useCurrentUser();
   const { confirmAndDelete, isDeleting } = useDeleteAccount();
   const {
     activeGroupId,
+    userId,
     clearGroupState,
   } = useSettingsStore();
 
@@ -103,12 +105,16 @@ export default function MenuScreen({ navigation }: any) {
     setFeedback(null);
   };
 
-  const leaveCurrentGroup = async () => {
+  const finishGroupExit = async (action: 'leave' | 'close') => {
     if (!activeGroupId || isLeavingGroup) return;
 
     setIsLeavingGroup(true);
     try {
-      await apiFetch(`/groups/${activeGroupId}/members/me`, { method: 'DELETE' });
+      if (action === 'close') {
+        await apiFetch(`/groups/${activeGroupId}/close`, { method: 'POST' });
+      } else {
+        await apiFetch(`/groups/${activeGroupId}/members/me`, { method: 'DELETE' });
+      }
       clearGroupState();
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Please try again.';
@@ -118,13 +124,41 @@ export default function MenuScreen({ navigation }: any) {
     }
   };
 
+  const chooseOwnerExitAction = () => {
+    Alert.alert(
+      'Leave or close the group?',
+      'Leaving transfers ownership to the longest-standing member. Closing ends the group for everyone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Leave group', onPress: () => finishGroupExit('leave') },
+        { text: 'Close group', style: 'destructive', onPress: () => finishGroupExit('close') },
+      ],
+    );
+  };
+
+  const resolveGroupExit = async () => {
+    if (!activeGroupId) return;
+    try {
+      const group = await apiFetch(`/groups/${activeGroupId}`) as GroupSnapshot;
+      const resolvedUserId = userId || (await apiFetch('/users/me'))?.id;
+      if (group.ownerId === resolvedUserId) {
+        chooseOwnerExitAction();
+      } else {
+        await finishGroupExit('leave');
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Please try again.';
+      Alert.alert('Could not load group details', message);
+    }
+  };
+
   const handleLeaveGroup = () => {
     Alert.alert(
       'Leave current group?',
-      'You will stop receiving this group’s route and updates.',
+      'Are you sure you want to leave this group?',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Leave', style: 'destructive', onPress: leaveCurrentGroup },
+        { text: 'Yes', style: 'destructive', onPress: resolveGroupExit },
       ],
     );
   };

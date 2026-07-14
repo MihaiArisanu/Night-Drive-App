@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from 'react';
 import { apiFetch } from '../services/api';
 import { GroupInvite, useSettingsStore } from '../store/useSettingsStore';
+import { applyGroupSnapshot, GroupSnapshot } from '../services/groupSession';
 
 interface GroupInviteResponse extends GroupInvite {
     senderId: string;
@@ -28,7 +29,10 @@ export function useGroupInvites() {
 
     const acceptGroupInvite = useCallback(async (invite: GroupInvite) => {
         try {
-            await apiFetch(`/groups/${invite.groupId}/join`, { method: 'POST' });
+            const snapshot = await apiFetch(`/groups/${invite.groupId}/join`, { method: 'POST' }) as GroupSnapshot;
+            if (snapshot?.ownerId && snapshot?.status) {
+                applyGroupSnapshot(snapshot);
+            }
             removePendingGroupInvite(invite.id);
             return true;
         } catch (error) {

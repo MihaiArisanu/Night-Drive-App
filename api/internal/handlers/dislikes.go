@@ -1,14 +1,20 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"strings"
+	"time"
 
+	"github.com/MihaiArisanu/nightdrive-backend/internal/db"
 	"github.com/MihaiArisanu/nightdrive-backend/internal/models"
+	"github.com/MihaiArisanu/nightdrive-backend/internal/streets"
 )
 
-func DislikesHandler(database *sql.DB) http.HandlerFunc {
+func DislikesHandler(database *sql.DB, streetResolver streets.Resolver) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, ok := r.Context().Value(UserIDKey).(string)
 		if !ok || userID == "" {
@@ -20,26 +26,10 @@ func DislikesHandler(database *sql.DB) http.HandlerFunc {
 
 		switch r.Method {
 		case http.MethodGet:
-			rows, err := database.Query(`
-                SELECT id, ST_Y(location::geometry) as lat, ST_X(location::geometry) as lng, reason, created_at 
-                FROM disliked_areas WHERE user_id = $1 ORDER BY created_at DESC`, userID)
-
+			dislikes, err := db.GetDislikedAreas(database, userID)
 			if err != nil {
-				RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to fetch disliked areas", nil)
+				RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to fetch disliked areas", err)
 				return
-			}
-			defer rows.Close()
-
-			var dislikes []models.DislikeResponse
-			for rows.Next() {
-				var d models.DislikeResponse
-				if err := rows.Scan(&d.ID, &d.Latitude, &d.Longitude, &d.Reason, &d.CreatedAt); err == nil {
-					dislikes = append(dislikes, d)
-				}
-			}
-
-			if dislikes == nil {
-				dislikes = []models.DislikeResponse{}
 			}
 
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -53,18 +43,53 @@ func DislikesHandler(database *sql.DB) http.HandlerFunc {
 				return
 			}
 
-			if req.Latitude == 0 || req.Longitude == 0 {
-				RespondWithError(w, http.StatusBadRequest, "bad_request", "Missing coordinates", nil)
+			req.Reason = strings.TrimSpace(req.Reason)
+			req.CoverageType = strings.ToLower(strings.TrimSpace(req.CoverageType))
+			if req.CoverageType == "" {
+				req.CoverageType = "street"
+			}
+			if !validCoordinates(req.Coordinates) || req.Reason == "" || len(req.Reason) > 255 {
+				RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid coordinates or street name", nil)
+				return
+			}
+			if req.CoverageType != "street" && req.CoverageType != "area" {
+				RespondWithError(w, http.StatusBadRequest, "invalid_coverage_type", "Coverage type must be street or area", nil)
 				return
 			}
 
-			_, err := database.Exec(`
-                INSERT INTO disliked_areas (user_id, location, reason) 
-                VALUES ($1, ST_SetSRID(ST_MakePoint($2, $3), 4326), $4)`,
-				userID, req.Longitude, req.Latitude, req.Reason)
+			var saveError error
+			if req.CoverageType == "area" {
+				saveError = db.SaveDislikedArea(database, userID, req)
+			} else {
+				resolutionContext, cancel := context.WithTimeout(r.Context(), 22*time.Second)
+				defer cancel()
+				geometry, err := streetResolver.Resolve(resolutionContext, streets.Selection{
+					Coordinates: req.Coordinates,
+					Name:        req.Reason,
+				})
+				if err != nil {
+					switch {
+					case errors.Is(err, streets.ErrStreetNotFound):
+						RespondWithError(w, http.StatusUnprocessableEntity, "street_not_found", "We could not identify this street reliably. Try selecting it again.", err)
+					case errors.Is(err, streets.ErrResolutionUnavailable), errors.Is(err, context.DeadlineExceeded):
+						RespondWithError(w, http.StatusServiceUnavailable, "street_resolution_unavailable", "Street data is temporarily unavailable. Please try again.", err)
+					default:
+						RespondWithError(w, http.StatusBadGateway, "street_resolution_failed", "Could not load the selected street", err)
+					}
+					return
+				}
+				saveError = db.SaveDislikedStreet(database, userID, req, geometry)
+			}
 
-			if err != nil {
-				RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to save disliked area", nil)
+			if saveError != nil {
+				switch {
+				case errors.Is(saveError, db.ErrDislikedAreaAlreadyExists):
+					RespondWithError(w, http.StatusConflict, "disliked_area_exists", "This street or area is already blocked", saveError)
+				case errors.Is(saveError, db.ErrDislikedAreaLimitReached):
+					RespondWithError(w, http.StatusUnprocessableEntity, "disliked_area_limit", "You can block at most 50 areas", saveError)
+				default:
+					RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to save disliked area", saveError)
+				}
 				return
 			}
 
@@ -93,9 +118,13 @@ func DislikeByIDHandler(database *sql.DB) http.HandlerFunc {
 
 		switch r.Method {
 		case http.MethodDelete:
-			_, err := database.Exec("DELETE FROM disliked_areas WHERE id = $1 AND user_id = $2", dislikeID, userID)
+			deleted, err := db.DeleteDislikedArea(database, userID, dislikeID)
 			if err != nil {
-				RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to delete disliked area", nil)
+				RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to delete disliked area", err)
+				return
+			}
+			if !deleted {
+				RespondWithError(w, http.StatusNotFound, "not_found", "Disliked street not found", nil)
 				return
 			}
 
@@ -108,10 +137,19 @@ func DislikeByIDHandler(database *sql.DB) http.HandlerFunc {
 				RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid request body", nil)
 				return
 			}
+			req.Reason = strings.TrimSpace(req.Reason)
+			if req.Reason == "" || len(req.Reason) > 255 {
+				RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid street name", nil)
+				return
+			}
 
-			_, err := database.Exec("UPDATE disliked_areas SET reason = $1 WHERE id = $2 AND user_id = $3", req.Reason, dislikeID, userID)
+			updated, err := db.UpdateDislikedAreaReason(database, userID, dislikeID, req.Reason)
 			if err != nil {
-				RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to update disliked area", nil)
+				RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to update disliked area", err)
+				return
+			}
+			if !updated {
+				RespondWithError(w, http.StatusNotFound, "not_found", "Disliked street not found", nil)
 				return
 			}
 

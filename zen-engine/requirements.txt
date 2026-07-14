@@ -3,6 +3,6 @@ uvicorn
 asyncpg
 pydantic
 scikit-learn
-shapely
 numpy
 httpx
+redis>=5,<7

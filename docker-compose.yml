@@ -26,8 +26,11 @@ services:
     environment:
       - DATABASE_URL=postgresql://zen_ro:${ZEN_RO_PASSWORD}@db:5432/${DB_NAME}
       - INTERNAL_SECRET=${INTERNAL_SECRET}
+      - OVERPASS_URLS=${OVERPASS_URLS:-https://z.overpass-api.de/api/interpreter,https://overpass.private.coffee/api/interpreter}
+      - REDIS_URL=redis://redis:6379
     depends_on:
       - db
+      - redis
     restart: unless-stopped
 
   nightdrive-api:
@@ -41,6 +44,7 @@ services:
       DB_PORT: 5432
       REDIS_URL: redis:6379
       ZEN_ENGINE_URL: http://zen-engine:8000
+      OVERPASS_URLS: ${OVERPASS_URLS:-https://z.overpass-api.de/api/interpreter,https://overpass.private.coffee/api/interpreter}
       MINIO_ENDPOINT: minio:9000
       MINIO_USER: ${MINIO_USER}
       MINIO_PASSWORD: ${MINIO_PASSWORD}

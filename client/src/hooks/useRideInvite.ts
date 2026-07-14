@@ -8,7 +8,13 @@ export function useRideInvite() {
     const sendInvite = async (targetUserId: string, myName: string, myLat: number, myLng: number) => {
         setIsInviting(true);
         try {
-            const { activeGroupId, draftGroupId, setDraftGroupId } = useSettingsStore.getState();
+            const {
+                activeGroupId,
+                draftGroupId,
+                userId,
+                setDraftGroupId,
+                setGroupOwnerId,
+            } = useSettingsStore.getState();
             const data = await apiFetch(`/groups/invite`, {
                 method: 'POST',
                 body: JSON.stringify({
@@ -22,6 +28,9 @@ export function useRideInvite() {
 
             if (!activeGroupId && data.groupId) {
                 setDraftGroupId(data.groupId);
+                if (!draftGroupId) {
+                    setGroupOwnerId(userId);
+                }
             }
 
             return { success: true, groupId: data.groupId };

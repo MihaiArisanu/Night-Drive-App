@@ -14,6 +14,8 @@ import (
 
 	"github.com/MihaiArisanu/nightdrive-backend/internal/db"
 	"github.com/MihaiArisanu/nightdrive-backend/internal/handlers"
+	"github.com/MihaiArisanu/nightdrive-backend/internal/routing"
+	"github.com/MihaiArisanu/nightdrive-backend/internal/streets"
 	"github.com/MihaiArisanu/nightdrive-backend/internal/ws"
 )
 
@@ -58,6 +60,12 @@ func main() {
 	hub := ws.NewHub(rdb)
 	go hub.Run()
 
+	routePlanner, err := routing.NewGoogleDirectionsPlanner(os.Getenv("GOOGLE_MAPS_API_KEY"), nil)
+	if err != nil {
+		log.Fatalf("Failed to initialize route planner: %v", err)
+	}
+	streetResolver := streets.NewOverpassResolver(os.Getenv("OVERPASS_URLS"), nil)
+
 	mux := http.NewServeMux()
 
 	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("./uploads"))))
@@ -96,7 +104,7 @@ func main() {
 	mux.HandleFunc("/api/v1/users", strictRateLimit(handlers.CreateUserHandler(database)))
 	mux.HandleFunc("/api/v1/auth/refresh", strictRateLimit(handlers.RefreshTokenHandler(database, rdb)))
 	mux.HandleFunc("/api/v1/auth/logout", strictRateLimit(requireAuth(handlers.LogoutHandler(rdb))))
-	mux.HandleFunc("/api/v1/auth/ws-ticket", requireAuth(handlers.CreateWebSocketTicketHandler(rdb)))
+	mux.HandleFunc("/api/v1/auth/ws-ticket", requireAuth(handlers.CreateWebSocketTicketHandler(database, rdb)))
 	mux.HandleFunc("/api/v1/auth/forgot-password", strictRateLimit(handlers.ForgotPasswordHandler(database)))
 	mux.HandleFunc("/api/v1/events/nearby", handlers.GetNearbyEventsHandler(database))
 	mux.HandleFunc("/api/v1/users/search", requireAuth(handlers.SearchUserHandler(database)))
@@ -117,7 +125,7 @@ func main() {
 
 	mux.HandleFunc("/api/v1/users/places", requireAuth(handlers.PlacesHandler(database)))
 	mux.HandleFunc("/api/v1/users/places/{id}", requireAuth(handlers.PlaceByIDHandler(database)))
-	mux.HandleFunc("/api/v1/users/dislikes", requireAuth(handlers.DislikesHandler(database)))
+	mux.HandleFunc("/api/v1/users/dislikes", requireAuth(handlers.DislikesHandler(database, streetResolver)))
 	mux.HandleFunc("/api/v1/users/dislikes/{id}", requireAuth(handlers.DislikeByIDHandler(database)))
 
 	mux.HandleFunc("/api/v1/locations/history", requireAuth(handlers.LocationHistoryHandler(database)))
@@ -125,17 +133,23 @@ func main() {
 	mux.HandleFunc("/api/v1/routes/zen/start", requireAuth(handlers.StartZenModeHandler(rdb)))
 	mux.HandleFunc("/api/v1/routes/zen/stop", requireAuth(handlers.StopZenModeHandler(rdb)))
 	mux.HandleFunc("/api/v1/routes/zen/sync", requireAuth(handlers.SyncZenLocationHandler(rdb)))
+	mux.HandleFunc("/api/v1/routes/active", requireAuth(handlers.SaveActiveRouteHandler(rdb)))
+	mux.HandleFunc("/api/v1/routes/plan", requireAuth(handlers.PlanRouteHandler(database, routePlanner)))
 
 	mux.HandleFunc("/api/v1/users/fcm", requireAuth(handlers.UpdateFCMTokenHandler(database)))
 
-	mux.HandleFunc("/api/v1/groups/{id}/stop", requireAuth(handlers.AddGroupStopHandler(database, hub)))
-	mux.HandleFunc("/api/v1/groups/invite", requireAuth(handlers.InviteGroupHandler(database, hub, rdb)))
-	mux.HandleFunc("/api/v1/group-invites", requireAuth(handlers.GetGroupInvitesHandler(rdb)))
-	mux.HandleFunc("/api/v1/group-invites/{id}", requireAuth(handlers.DeleteGroupInviteHandler(rdb)))
-	mux.HandleFunc("/api/v1/groups/{id}/join", requireAuth(handlers.JoinGroupHandler(rdb, hub)))
-	mux.HandleFunc("/api/v1/groups/{id}/members/me", requireAuth(handlers.LeaveGroupHandler(rdb, hub)))
-	mux.HandleFunc("/api/v1/groups/{id}/voice-token", requireAuth(handlers.GroupVoiceTokenHandler(database, rdb)))
-	mux.HandleFunc("/api/v1/groups/{id}", requireAuth(handlers.GetGroupDetailsHandler(database, rdb)))
+	mux.HandleFunc("/api/v1/groups/{id}/stop", requireAuth(handlers.AddGroupStopHandler(database, rdb, hub)))
+	mux.HandleFunc("/api/v1/groups/{id}/stops/evaluate", requireAuth(handlers.EvaluateGroupStopsHandler(database, rdb)))
+	mux.HandleFunc("/api/v1/groups/{id}/destination", requireAuth(handlers.UpdateGroupDestinationHandler(database, hub)))
+	mux.HandleFunc("/api/v1/groups/{id}/close", requireAuth(handlers.CloseGroupHandler(database, hub)))
+	mux.HandleFunc("/api/v1/groups/invite", requireAuth(handlers.InviteGroupHandler(database, hub)))
+	mux.HandleFunc("/api/v1/groups/me/current", requireAuth(handlers.GetCurrentGroupHandler(database)))
+	mux.HandleFunc("/api/v1/group-invites", requireAuth(handlers.GetGroupInvitesHandler(database)))
+	mux.HandleFunc("/api/v1/group-invites/{id}", requireAuth(handlers.DeleteGroupInviteHandler(database)))
+	mux.HandleFunc("/api/v1/groups/{id}/join", requireAuth(handlers.JoinGroupHandler(database, hub)))
+	mux.HandleFunc("/api/v1/groups/{id}/members/me", requireAuth(handlers.LeaveGroupHandler(database, hub)))
+	mux.HandleFunc("/api/v1/groups/{id}/voice-token", requireAuth(handlers.GroupVoiceTokenHandler(database)))
+	mux.HandleFunc("/api/v1/groups/{id}", requireAuth(handlers.GetGroupDetailsHandler(database)))
 
 	mux.HandleFunc("/api/v1/ws", func(w http.ResponseWriter, r *http.Request) {
 		handlers.ServeWS(hub, rdb, w, r)

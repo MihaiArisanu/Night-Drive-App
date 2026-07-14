@@ -121,9 +121,9 @@ export default function FriendsScreen({ navigation, route }: any) {
     };
 
     const groupRelationship = (memberId: string, details: GroupDetails | null) => {
-        if (!details) return null;
-        if (details.members.some((member) => member.id === memberId)) return 'member';
-        if (details.pending.some((member) => member.id === memberId)) return 'pending';
+        if (details?.members.some((member) => member.id === memberId)) return 'member';
+        if (details?.pending.some((member) => member.id === memberId)) return 'pending';
+        if (pendingGroupInvites.some((invite) => invite.senderId === memberId)) return 'incoming';
         return null;
     };
 
@@ -232,16 +232,22 @@ export default function FriendsScreen({ navigation, route }: any) {
                                 style={[
                                     styles.actionButton,
                                     relationship === 'member' && styles.disabledButton,
-                                    relationship === 'pending' && styles.pendingInviteButton,
+                                    (relationship === 'pending' || relationship === 'incoming') && styles.pendingInviteButton,
                                 ]}
                                 onPress={() => handleInviteToGroup(item.id)}
                                 disabled={!!relationship}
                             >
                                 <Text style={[
                                     styles.actionButtonText,
-                                    relationship === 'pending' && styles.pendingInviteButtonText,
+                                    (relationship === 'pending' || relationship === 'incoming') && styles.pendingInviteButtonText,
                                 ]}>
-                                    {relationship === 'member' ? 'In Group' : relationship === 'pending' ? 'Pending' : 'Invite to Group'}
+                                    {relationship === 'member'
+                                        ? 'In Group'
+                                        : relationship === 'pending'
+                                            ? 'Pending'
+                                            : relationship === 'incoming'
+                                                ? 'Is inviting you'
+                                                : 'Invite to Group'}
                                 </Text>
                             </TouchableOpacity>
                                 );
@@ -262,7 +268,11 @@ export default function FriendsScreen({ navigation, route }: any) {
                 <ProfileAvatar profilePictureUrl={member.profile_picture_url} size={46} style={styles.friendAvatar} />
                 <View style={styles.friendTextContainer}>
                     <Text style={styles.cardTitle}>{member.name}{member.id === userId ? ' (You)' : ''}</Text>
-                    <Text style={styles.cardSubtitle}>#{member.tag}{isPending ? ' · Pending' : ''}</Text>
+                    <Text style={styles.cardSubtitle}>
+                        #{member.tag}
+                        {member.id === groupDetails?.ownerId ? ' · Owner' : ''}
+                        {isPending ? ' · Pending' : ''}
+                    </Text>
                 </View>
             </View>
             {member.id !== userId && !member.isFriend && (
@@ -289,6 +299,9 @@ export default function FriendsScreen({ navigation, route }: any) {
                 <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.groupListContent}>
                     <View style={styles.groupSummary}>
                         <Text style={styles.groupTitle}>CURRENT GROUP</Text>
+                        <Text style={styles.groupOwner}>
+                            Owner: {groupDetails.members.find((member) => member.id === groupDetails.ownerId)?.name || 'Unknown'}
+                        </Text>
                         <Text style={styles.groupCount}>{groupDetails.members.length} active · {groupDetails.pending.length} pending</Text>
                     </View>
 
@@ -610,6 +623,12 @@ const styles = StyleSheet.create({
         color: '#A1A1AA',
         fontSize: 13,
         marginTop: 5,
+    },
+    groupOwner: {
+        color: '#C084FC',
+        fontSize: 14,
+        fontWeight: '700',
+        marginTop: 8,
     },
     sectionLabel: {
         color: '#A1A1AA',

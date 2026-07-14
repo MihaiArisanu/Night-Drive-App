@@ -81,10 +81,16 @@ export function useWebSocket(
 
                         const {
                             activeGroupId,
+                            draftGroupId,
+                            userId,
                             setActiveGroupId,
                             setDraftGroupId,
-                            setGroupStop,
+                            setGroupOwnerId,
+                            setGroupVersion,
+                            setGroupDestination,
+                            addGroupStop,
                             setGroupMembers,
+                            clearGroupState,
                             clearSettings,
                             addPendingGroupInvite,
                             removePendingGroupInvite,
@@ -106,6 +112,9 @@ export function useWebSocket(
                             if (acceptedGroupId) {
                                 setActiveGroupId(acceptedGroupId);
                                 setDraftGroupId(null);
+                                setGroupOwnerId(message.payload?.ownerId || null);
+                                setGroupVersion(message.payload?.version || 0);
+                                setGroupDestination(message.payload?.destination || null);
                                 Toast.show({
                                     type: 'success',
                                     text1: 'Group Ride started',
@@ -118,10 +127,26 @@ export function useWebSocket(
                             if (payload?.groupId === activeGroupId && payload?.userId) {
                                 const currentMembers = useSettingsStore.getState().groupMembers;
                                 setGroupMembers(currentMembers.filter((member) => member.id !== payload.userId));
+                                if (payload.newOwnerId) {
+                                    setGroupOwnerId(payload.newOwnerId);
+                                }
                                 Toast.show({
                                     type: 'info',
-                                    text1: 'Group updated',
-                                    text2: 'A driver left the group.',
+                                    text1: payload.newOwnerId === userId ? 'You are now the group owner' : 'Group updated',
+                                    text2: payload.newOwnerId === userId
+                                        ? 'The previous owner left the ride group.'
+                                        : 'A driver left the group.',
+                                    position: 'top',
+                                });
+                            }
+                        } else if (message.type === 'GROUP_CLOSED') {
+                            const closedGroupId = message.payload?.groupId;
+                            if (closedGroupId && (closedGroupId === activeGroupId || closedGroupId === draftGroupId)) {
+                                clearGroupState();
+                                Toast.show({
+                                    type: 'info',
+                                    text1: 'Group Ride ended',
+                                    text2: 'The group owner closed the ride group.',
                                     position: 'top',
                                 });
                             }
@@ -147,18 +172,51 @@ export function useWebSocket(
                                     }
                                 }]
                             );
-                        } else if (message.type === 'group_stop_added') {
-                            if (message.group_id === activeGroupId) {
-                                setGroupStop({
-                                    latitude: message.payload.latitude,
-                                    longitude: message.payload.longitude,
-                                    name: message.payload.name
-                                });
+                        } else if (message.type === 'GROUP_STOP_ADDED' || message.type === 'group_stop_added') {
+                            const payload = message.payload;
+                            const stopGroupId = payload?.groupId || message.group_id;
+                            const stop = payload?.stop;
+                            const currentVersion = useSettingsStore.getState().groupVersion;
+                            if (
+                                stopGroupId === activeGroupId
+                                && payload?.appliesToCurrentUser !== false
+                                && stop?.id
+                                && typeof stop.latitude === 'number'
+                                && typeof stop.longitude === 'number'
+                                && (typeof payload.version !== 'number' || payload.version >= currentVersion)
+                            ) {
+                                addGroupStop(stop);
+                                if (typeof payload.version === 'number') {
+                                    setGroupVersion(payload.version);
+                                }
 
                                 Toast.show({
                                     type: 'info',
                                     text1: 'Route Updated!',
-                                    text2: `${message.payload.name} added as a group stop.`,
+                                    text2: `${stop.name || 'A stop'} was added to the group route.`,
+                                    position: 'top',
+                                    visibilityTime: 4000,
+                                });
+                            }
+                        } else if (message.type === 'GROUP_DESTINATION_UPDATED') {
+                            const payload = message.payload;
+                            const destinationGroupId = payload?.groupId;
+                            const currentVersion = useSettingsStore.getState().groupVersion;
+                            if (
+                                destinationGroupId === activeGroupId
+                                && payload?.destination
+                                && typeof payload.destination.latitude === 'number'
+                                && typeof payload.destination.longitude === 'number'
+                                && (typeof payload.version !== 'number' || payload.version >= currentVersion)
+                            ) {
+                                setGroupDestination(payload.destination);
+                                if (typeof payload.version === 'number') {
+                                    setGroupVersion(payload.version);
+                                }
+                                Toast.show({
+                                    type: 'info',
+                                    text1: 'Group destination updated',
+                                    text2: payload.destination.name || 'A new final destination was selected.',
                                     position: 'top',
                                     visibilityTime: 4000,
                                 });

@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { View, Text, StyleSheet, Platform, PermissionsAndroid } from 'react-native';
 import Video from 'react-native-video';
 import { AuthStorage } from '../services/api';
+import { restoreAuthenticatedSession } from '../services/sessionBootstrap';
 import { useSettingsStore } from '../store/useSettingsStore';
 
 export default function SplashScreen({ navigation }: any) {
@@ -12,6 +13,13 @@ export default function SplashScreen({ navigation }: any) {
 
                 if (token) {
                     useSettingsStore.getState().setToken(token);
+                    try {
+                        await restoreAuthenticatedSession();
+                    } catch (error) {
+                        // Authentication is still valid when session recovery
+                        // is temporarily unavailable. Main can reconnect later.
+                        console.warn('Could not fully restore the current session:', error);
+                    }
                     navigation.replace('Main');
                 } else {
                     navigation.replace('Onboarding');
