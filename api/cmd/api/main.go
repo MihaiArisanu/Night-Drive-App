@@ -100,9 +100,10 @@ func main() {
 	requireAuth := func(next http.HandlerFunc) http.HandlerFunc {
 		return handlers.RequireAuth(rdb, next)
 	}
-	mux.HandleFunc("/api/v1/login", strictRateLimit(handlers.LoginHandler(database, hub, rdb)))
+	mux.HandleFunc("/api/v1/login", strictRateLimit(handlers.LoginHandler(database, rdb)))
 	mux.HandleFunc("/api/v1/users", strictRateLimit(handlers.CreateUserHandler(database)))
 	mux.HandleFunc("/api/v1/auth/refresh", strictRateLimit(handlers.RefreshTokenHandler(database, rdb)))
+	mux.HandleFunc("/api/v1/auth/session/claim", strictRateLimit(handlers.ClaimAuthSessionHandler(database, hub, rdb)))
 	mux.HandleFunc("/api/v1/auth/logout", strictRateLimit(requireAuth(handlers.LogoutHandler(rdb))))
 	mux.HandleFunc("/api/v1/auth/ws-ticket", requireAuth(handlers.CreateWebSocketTicketHandler(database, rdb)))
 	mux.HandleFunc("/api/v1/auth/forgot-password", strictRateLimit(handlers.ForgotPasswordHandler(database)))
@@ -140,6 +141,7 @@ func main() {
 
 	mux.HandleFunc("/api/v1/groups/{id}/stop", requireAuth(handlers.AddGroupStopHandler(database, rdb, hub)))
 	mux.HandleFunc("/api/v1/groups/{id}/stops/evaluate", requireAuth(handlers.EvaluateGroupStopsHandler(database, rdb)))
+	mux.HandleFunc("/api/v1/groups/{id}/stops/{stopId}", requireAuth(handlers.CancelGroupStopHandler(database, hub)))
 	mux.HandleFunc("/api/v1/groups/{id}/destination", requireAuth(handlers.UpdateGroupDestinationHandler(database, hub)))
 	mux.HandleFunc("/api/v1/groups/{id}/close", requireAuth(handlers.CloseGroupHandler(database, hub)))
 	mux.HandleFunc("/api/v1/groups/invite", requireAuth(handlers.InviteGroupHandler(database, hub)))

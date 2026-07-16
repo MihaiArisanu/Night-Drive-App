@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import { apiFetch } from '../services/api';
 
 export interface DislikedArea {
@@ -6,10 +7,11 @@ export interface DislikedArea {
     latitude: number;
     longitude: number;
     reason: string;
-    coverage_type: 'area' | 'street' | 'segment';
+    coverage_type: 'area' | 'street' | 'segment' | 'polygon';
     street_name?: string;
     avoidance_radius_meters: number;
     paths?: Array<Array<{ latitude: number; longitude: number }>>;
+    polygon?: Array<{ latitude: number; longitude: number }>;
     created_at?: string;
 }
 
@@ -17,7 +19,7 @@ export function useDislikedAreas() {
     const [dislikedAreas, setDislikedAreas] = useState<DislikedArea[]>([]);
     const [isLoading, setIsLoading] = useState(true);
 
-    const fetchDislikes = async () => {
+    const fetchDislikes = useCallback(async () => {
         try {
             const data = await apiFetch('/users/dislikes');
             setDislikedAreas(data.dislikes || []);
@@ -26,11 +28,11 @@ export function useDislikedAreas() {
         } finally {
             setIsLoading(false);
         }
-    };
-
-    useEffect(() => {
-        fetchDislikes();
     }, []);
+
+    useFocusEffect(useCallback(() => {
+        fetchDislikes();
+    }, [fetchDislikes]));
 
     const addDislike = async (
         latitude: number,
@@ -70,6 +72,27 @@ export function useDislikedAreas() {
         }
     };
 
+    const addDrawnZone = async (
+        polygon: Array<{ latitude: number; longitude: number }>,
+        reason: string,
+    ) => {
+        try {
+            await apiFetch('/users/dislikes', {
+                method: 'POST',
+                body: JSON.stringify({
+                    reason,
+                    coverage_type: 'polygon',
+                    polygon,
+                }),
+            });
+            await fetchDislikes();
+            return true;
+        } catch (error) {
+            console.error("Failed to add drawn avoidance zone:", error);
+            return false;
+        }
+    };
+
     const removeDislike = async (id: string) => {
         try {
             await apiFetch(`/users/dislikes/${id}`, {
@@ -83,5 +106,13 @@ export function useDislikedAreas() {
         }
     };
 
-    return { dislikedAreas, isLoading, addDislike, updateDislike, removeDislike, refetchDislikes: fetchDislikes };
+    return {
+        dislikedAreas,
+        isLoading,
+        addDislike,
+        addDrawnZone,
+        updateDislike,
+        removeDislike,
+        refetchDislikes: fetchDislikes,
+    };
 }

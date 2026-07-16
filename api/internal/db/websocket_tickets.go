@@ -19,8 +19,9 @@ const WebSocketTicketTTL = 30 * time.Second
 var ErrInvalidWebSocketTicket = errors.New("invalid or expired WebSocket ticket")
 
 type WebSocketTicket struct {
-	UserID  string `json:"userId"`
-	GroupID string `json:"groupId,omitempty"`
+	UserID    string `json:"userId"`
+	SessionID string `json:"sessionId"`
+	GroupID   string `json:"groupId,omitempty"`
 }
 
 func webSocketTicketKey(ticket string) string {
@@ -28,13 +29,17 @@ func webSocketTicketKey(ticket string) string {
 	return "ws_ticket:" + hex.EncodeToString(digest[:])
 }
 
-func CreateWebSocketTicket(ctx context.Context, rdb *redis.Client, userID, groupID string) (string, error) {
+func CreateWebSocketTicket(ctx context.Context, rdb *redis.Client, userID, sessionID, groupID string) (string, error) {
 	randomBytes := make([]byte, 32)
 	if _, err := rand.Read(randomBytes); err != nil {
 		return "", fmt.Errorf("generate WebSocket ticket: %w", err)
 	}
 	ticket := base64.RawURLEncoding.EncodeToString(randomBytes)
-	payload, err := json.Marshal(WebSocketTicket{UserID: userID, GroupID: groupID})
+	payload, err := json.Marshal(WebSocketTicket{
+		UserID:    userID,
+		SessionID: sessionID,
+		GroupID:   groupID,
+	})
 	if err != nil {
 		return "", fmt.Errorf("encode WebSocket ticket: %w", err)
 	}
@@ -54,7 +59,7 @@ func ConsumeWebSocketTicket(ctx context.Context, rdb *redis.Client, ticket strin
 	}
 
 	var result WebSocketTicket
-	if err := json.Unmarshal(payload, &result); err != nil || result.UserID == "" {
+	if err := json.Unmarshal(payload, &result); err != nil || result.UserID == "" || result.SessionID == "" {
 		return WebSocketTicket{}, ErrInvalidWebSocketTicket
 	}
 	return result, nil

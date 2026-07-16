@@ -12,6 +12,7 @@ type UserCreateRequest struct {
 type LoginRequest struct {
 	Email    string `json:"email" validate:"required,email"`
 	Password string `json:"password" validate:"required"`
+	DeviceID string `json:"device_id" validate:"omitempty,min=16,max=128"`
 }
 
 type User struct {

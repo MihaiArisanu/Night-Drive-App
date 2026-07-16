@@ -1,14 +1,24 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, Keyboard, Modal, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, Trash2 } from 'lucide-react-native';
+import { ArrowLeft, Pencil, Trash2 } from 'lucide-react-native';
 import Toast from 'react-native-toast-message';
 import { useDislikedAreas } from '../hooks/useDislikedAreas';
 import { SearchBar } from '../components/SearchBar';
+import { DrawAvoidanceZoneModal } from '../components/DrawAvoidanceZoneModal';
+import { useLocation } from '../hooks/useLocation';
 
 export default function DislikedStreetsScreen({ navigation }: any) {
-    const { dislikedAreas, removeDislike, addDislike, updateDislike } = useDislikedAreas();
+    const {
+        dislikedAreas,
+        removeDislike,
+        addDislike,
+        addDrawnZone,
+        updateDislike,
+    } = useDislikedAreas();
+    const { coords } = useLocation();
     const [isAdding, setIsAdding] = useState(false);
+    const [isDrawingZone, setIsDrawingZone] = useState(false);
 
     const [editingArea, setEditingArea] = useState<any>(null);
     const [editReason, setEditReason] = useState("");
@@ -42,9 +52,13 @@ export default function DislikedStreetsScreen({ navigation }: any) {
                     searchFilter="address"
                     placeholder="Search street to block..."
                     onClose={() => Keyboard.dismiss()}
-                    onPlaceSelect={async (coords, name) => {
+                    onPlaceSelect={async (selectedCoords, name) => {
                         setIsAdding(true);
-                        const success = await addDislike(coords.latitude, coords.longitude, name);
+                        const success = await addDislike(
+                            selectedCoords.latitude,
+                            selectedCoords.longitude,
+                            name,
+                        );
                         setIsAdding(false);
 
                         Toast.show({
@@ -57,6 +71,19 @@ export default function DislikedStreetsScreen({ navigation }: any) {
                     }}
                 />
             </View>
+
+            <TouchableOpacity
+                style={styles.drawZoneButton}
+                onPress={() => setIsDrawingZone(true)}
+            >
+                <Pencil color="#FFF" size={21} />
+                <View style={styles.drawZoneText}>
+                    <Text style={styles.drawZoneTitle}>Draw a zone on the map</Text>
+                    <Text style={styles.drawZoneSubtitle}>
+                        Circle an intersection or any area you want routes to avoid
+                    </Text>
+                </View>
+            </TouchableOpacity>
 
             <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.content}>
                 {isAdding && <ActivityIndicator color="#EF4444" style={{ marginBottom: 15 }} />}
@@ -80,6 +107,8 @@ export default function DislikedStreetsScreen({ navigation }: any) {
                                         ? 'Entire street will be avoided'
                                         : area.coverage_type === 'segment'
                                             ? 'Selected street segment will be avoided'
+                                            : area.coverage_type === 'polygon'
+                                                ? 'Custom drawn zone will be avoided'
                                             : 'Routes will avoid this area'}
                                 </Text>
                             </View>
@@ -119,6 +148,23 @@ export default function DislikedStreetsScreen({ navigation }: any) {
                     </View>
                 </View>
             </Modal>
+
+            <DrawAvoidanceZoneModal
+                visible={isDrawingZone}
+                userCoordinate={coords.latitude === 0 ? null : coords}
+                onClose={() => setIsDrawingZone(false)}
+                onSave={async (polygon, name) => {
+                    const success = await addDrawnZone(polygon, name);
+                    Toast.show({
+                        type: success ? 'success' : 'error',
+                        text1: success ? 'Zone blocked' : 'Could not block zone',
+                        text2: success
+                            ? 'Normal and Zen routes will avoid the drawn area.'
+                            : 'Please check the shape or connection and try again.',
+                    });
+                    return success;
+                }}
+            />
         </SafeAreaView>
     );
 }
@@ -149,6 +195,32 @@ const styles = StyleSheet.create({
         paddingHorizontal: 20,
         zIndex: 100,
         marginBottom: 10
+    },
+    drawZoneButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#18181B',
+        borderWidth: 1,
+        borderColor: '#EF4444',
+        borderRadius: 16,
+        marginHorizontal: 20,
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+    },
+    drawZoneText: {
+        flex: 1,
+        marginLeft: 12,
+    },
+    drawZoneTitle: {
+        color: '#FFF',
+        fontSize: 15,
+        fontWeight: '900',
+    },
+    drawZoneSubtitle: {
+        color: '#A1A1AA',
+        fontSize: 12,
+        lineHeight: 17,
+        marginTop: 2,
     },
     content: {
         padding: 20

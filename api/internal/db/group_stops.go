@@ -17,6 +17,11 @@ type CreateGroupStopResult struct {
 	EligibleMemberIDs []string
 }
 
+type CancelGroupStopResult struct {
+	Cancellation models.GroupStopCancellation
+	MemberIDs    []string
+}
+
 func CreateGroupStop(
 	ctx context.Context,
 	dbConn *sql.DB,
@@ -233,4 +238,153 @@ func ResolveGroupStopForMember(
 		return fmt.Errorf("commit group stop resolution: %w", err)
 	}
 	return nil
+}
+
+func CancelGroupStop(
+	ctx context.Context,
+	dbConn *sql.DB,
+	groupID string,
+	stopID string,
+	userID string,
+) (CancelGroupStopResult, error) {
+	tx, err := dbConn.BeginTx(ctx, nil)
+	if err != nil {
+		return CancelGroupStopResult{}, fmt.Errorf("begin group stop cancellation: %w", err)
+	}
+	defer tx.Rollback()
+
+	var ownerID, groupStatus string
+	var version int64
+	err = tx.QueryRowContext(ctx, `
+		SELECT owner_id, status, version
+		FROM ride_groups
+		WHERE id = $1
+		FOR UPDATE
+	`, groupID).Scan(&ownerID, &groupStatus, &version)
+	if errors.Is(err, sql.ErrNoRows) {
+		return CancelGroupStopResult{}, ErrGroupNotFound
+	}
+	if err != nil {
+		return CancelGroupStopResult{}, fmt.Errorf("lock group for stop cancellation: %w", err)
+	}
+	if groupStatus != "active" {
+		return CancelGroupStopResult{}, ErrGroupNotActive
+	}
+
+	var requesterIsMember bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM ride_group_members
+			WHERE group_id = $1 AND user_id = $2 AND status = 'active'
+		)
+	`, groupID, userID).Scan(&requesterIsMember); err != nil {
+		return CancelGroupStopResult{}, fmt.Errorf("check stop cancellation membership: %w", err)
+	}
+	if !requesterIsMember {
+		return CancelGroupStopResult{}, ErrGroupAccessDenied
+	}
+
+	cancelledForAll := ownerID == userID
+	if cancelledForAll {
+		result, err := tx.ExecContext(ctx, `
+			UPDATE group_stops
+			SET status = 'cancelled'
+			WHERE id = $1 AND group_id = $2 AND status = 'active'
+		`, stopID, groupID)
+		if err != nil {
+			return CancelGroupStopResult{}, fmt.Errorf("cancel group stop globally: %w", err)
+		}
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return CancelGroupStopResult{}, fmt.Errorf("read global stop cancellation result: %w", err)
+		}
+		if rowsAffected == 0 {
+			return CancelGroupStopResult{}, ErrGroupStopNotFound
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE group_stop_members
+			SET status = 'skipped', decided_at = CURRENT_TIMESTAMP
+			WHERE group_stop_id = $1 AND status = 'pending'
+		`, stopID); err != nil {
+			return CancelGroupStopResult{}, fmt.Errorf("cancel group stop assignments: %w", err)
+		}
+		if err := tx.QueryRowContext(ctx, `
+			UPDATE ride_groups
+			SET version = version + 1, updated_at = CURRENT_TIMESTAMP
+			WHERE id = $1
+			RETURNING version
+		`, groupID).Scan(&version); err != nil {
+			return CancelGroupStopResult{}, fmt.Errorf("version group stop cancellation: %w", err)
+		}
+	} else {
+		result, err := tx.ExecContext(ctx, `
+			UPDATE group_stop_members assignment
+			SET status = 'skipped', decided_at = CURRENT_TIMESTAMP
+			FROM group_stops stop
+			WHERE assignment.group_stop_id = stop.id
+			  AND stop.id = $1
+			  AND stop.group_id = $2
+			  AND stop.status = 'active'
+			  AND assignment.user_id = $3
+			  AND assignment.status = 'pending'
+		`, stopID, groupID, userID)
+		if err != nil {
+			return CancelGroupStopResult{}, fmt.Errorf("skip group stop for member: %w", err)
+		}
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return CancelGroupStopResult{}, fmt.Errorf("read member stop cancellation result: %w", err)
+		}
+		if rowsAffected == 0 {
+			return CancelGroupStopResult{}, ErrGroupStopNotFound
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE group_stops stop
+			SET status = 'completed'
+			WHERE stop.id = $1
+			  AND stop.status = 'active'
+			  AND NOT EXISTS (
+				SELECT 1 FROM group_stop_members assignment
+				WHERE assignment.group_stop_id = stop.id AND assignment.status = 'pending'
+			  )
+		`, stopID); err != nil {
+			return CancelGroupStopResult{}, fmt.Errorf("complete skipped group stop: %w", err)
+		}
+	}
+
+	memberIDs := make([]string, 0)
+	if cancelledForAll {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT user_id FROM ride_group_members
+			WHERE group_id = $1 AND status = 'active'
+			ORDER BY joined_at, user_id
+		`, groupID)
+		if err != nil {
+			return CancelGroupStopResult{}, fmt.Errorf("load members for stop cancellation: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var memberID string
+			if err := rows.Scan(&memberID); err != nil {
+				return CancelGroupStopResult{}, fmt.Errorf("scan stop cancellation member: %w", err)
+			}
+			memberIDs = append(memberIDs, memberID)
+		}
+		if err := rows.Err(); err != nil {
+			return CancelGroupStopResult{}, fmt.Errorf("iterate stop cancellation members: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return CancelGroupStopResult{}, fmt.Errorf("commit group stop cancellation: %w", err)
+	}
+	return CancelGroupStopResult{
+		Cancellation: models.GroupStopCancellation{
+			GroupID:         groupID,
+			StopID:          stopID,
+			CancelledForAll: cancelledForAll,
+			Version:         version,
+		},
+		MemberIDs: memberIDs,
+	}, nil
 }

@@ -22,6 +22,7 @@ var (
 	ErrGroupNotActive     = errors.New("group is not active")
 	ErrGroupOwnerRequired = errors.New("only the group owner can perform this action")
 	ErrTooManyGroupStops  = errors.New("group has too many active stops")
+	ErrGroupStopNotFound  = errors.New("active group stop not found")
 	ErrUserAlreadyInGroup = errors.New("user is already in another group")
 )
 

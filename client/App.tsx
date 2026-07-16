@@ -15,6 +15,7 @@ import SavedPlacesScreen from './src/screens/SavedPlacesScreen';
 import DislikedStreetsScreen from './src/screens/DislikedStreetsScreen';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import FriendsScreen from './src/screens/FriendsScreen';
+import SessionInvalidationGuard from './src/components/SessionInvalidationGuard';
 
 const Stack = createNativeStackNavigator();
 
@@ -22,6 +23,7 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <NavigationContainer>
+        <SessionInvalidationGuard />
         <Stack.Navigator
           initialRouteName="Splash"
           screenOptions={{

@@ -14,12 +14,12 @@
       android:roundIcon="@mipmap/ic_launcher"
       android:allowBackup="false"
       android:theme="@style/AppTheme"
-      android:usesCleartextTraffic="true"
+      android:usesCleartextTraffic="${usesCleartextTraffic}"
       android:supportsRtl="true">
 
       <meta-data
         android:name="com.google.android.geo.API_KEY"
-        android:value="AIzaSyDM_r2rYz5kLkN5zNnPBLiC-l9rh3FNofs" /> <!-- e secure prin amprenta sha1 -->
+        android:value="${googleApiKey}" />
 
       <activity
         android:name=".MainActivity"

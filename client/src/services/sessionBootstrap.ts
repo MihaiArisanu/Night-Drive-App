@@ -1,6 +1,7 @@
 import { apiFetch } from './api';
 import { restoreCurrentGroup } from './groupSession';
 import { useSettingsStore } from '../store/useSettingsStore';
+import { identifyCrashReportingUser } from './crashReporting';
 
 interface AuthenticatedUserIdentity {
     id: string;
@@ -12,6 +13,7 @@ export async function restoreCurrentUserIdentity() {
     const settings = useSettingsStore.getState();
     settings.setUserId(user.id);
     settings.setUserName(user.name);
+    await identifyCrashReportingUser(user.id);
     return user;
 }
 

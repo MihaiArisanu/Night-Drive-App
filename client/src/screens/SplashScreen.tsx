@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
-import { View, Text, StyleSheet, Platform, PermissionsAndroid } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import Video from 'react-native-video';
-import { AuthStorage } from '../services/api';
+import { ApiError, AuthStorage } from '../services/api';
 import { restoreAuthenticatedSession } from '../services/sessionBootstrap';
 import { useSettingsStore } from '../store/useSettingsStore';
 
@@ -16,6 +16,14 @@ export default function SplashScreen({ navigation }: any) {
                     try {
                         await restoreAuthenticatedSession();
                     } catch (error) {
+                        if (
+                            error instanceof ApiError
+                            && (error.code === 'session_replaced' || error.code === 'account_deleted')
+                        ) {
+                            await AuthStorage.clearTokens();
+                            navigation.replace('Auth', { isLogin: true });
+                            return;
+                        }
                         // Authentication is still valid when session recovery
                         // is temporarily unavailable. Main can reconnect later.
                         console.warn('Could not fully restore the current session:', error);
@@ -33,7 +41,7 @@ export default function SplashScreen({ navigation }: any) {
         setTimeout(() => {
             bootApp();
         }, 5500);
-    }, []);
+    }, [navigation]);
 
     return (
         <View style={styles.container}>

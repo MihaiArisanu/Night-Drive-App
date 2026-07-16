@@ -1,13 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ApiError, apiFetch, AuthStorage } from '../services/api';
+import { ApiError, apiFetch, AuthStorage, DeviceIdentity } from '../services/api';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { restoreAuthenticatedSession } from '../services/sessionBootstrap';
+import { identifyCrashReportingUser } from '../services/crashReporting';
 
 const generateHexTag = (): string => {
     return Math.floor(Math.random() * 0xFFFF).toString(16).toUpperCase().padStart(4, '0');
 };
+
+interface LoginResponse {
+    access_token: string;
+    refresh_token: string;
+    user_id: string;
+}
 
 export default function AuthScreen({ route, navigation }: any) {
     const initialIsLogin = route.params?.isLogin ?? true;
@@ -26,6 +33,44 @@ export default function AuthScreen({ route, navigation }: any) {
         }
     }, [isLogin]);
 
+    const completeLogin = async (data: LoginResponse) => {
+        await AuthStorage.saveTokens(data.access_token, data.refresh_token);
+        useSettingsStore.getState().setUserId(data.user_id);
+        await identifyCrashReportingUser(data.user_id);
+
+        try {
+            await restoreAuthenticatedSession();
+        } catch (error) {
+            console.warn('Could not fully restore the current session:', error);
+        }
+
+        navigation.replace('Main');
+    };
+
+    const claimSession = async (challenge: string) => {
+        setIsLoading(true);
+        try {
+            const data = await apiFetch('/auth/session/claim', {
+                method: 'POST',
+                body: JSON.stringify({ challenge }),
+                skipAuthentication: true,
+            }) as LoginResponse;
+            await completeLogin(data);
+        } catch (error: unknown) {
+            const message = error instanceof ApiError && (
+                error.code === 'session_challenge_expired'
+                || error.code === 'session_conflict_changed'
+            )
+                ? 'The active session changed or the confirmation expired. Please log in again.'
+                : error instanceof Error
+                    ? error.message
+                    : 'Could not activate this device. Please try again.';
+            Alert.alert('Could not switch device', message);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     const handleSubmit = async () => {
         if (!email || !password || (!isLogin && !username)) {
             Alert.alert('Error', 'Please fill in all fields.');
@@ -36,23 +81,18 @@ export default function AuthScreen({ route, navigation }: any) {
 
         try {
             if (isLogin) {
+                const deviceId = await DeviceIdentity.getOrCreate();
                 const data = await apiFetch('/login', {
                     method: 'POST',
-                    body: JSON.stringify({ email: email.trim(), password }),
+                    body: JSON.stringify({
+                        email: email.trim(),
+                        password,
+                        device_id: deviceId,
+                    }),
                     skipAuthentication: true,
-                });
+                }) as LoginResponse;
 
-                await AuthStorage.saveTokens(data.access_token, data.refresh_token);
-                useSettingsStore.getState().setToken(data.access_token);
-                useSettingsStore.getState().setUserId(data.user_id);
-
-                try {
-                    await restoreAuthenticatedSession();
-                } catch (error) {
-                    console.warn('Could not fully restore the current session:', error);
-                }
-
-                navigation.replace('Main');
+                await completeLogin(data);
             } else {
                 await apiFetch('/users', {
                     method: 'POST',
@@ -71,6 +111,30 @@ export default function AuthScreen({ route, navigation }: any) {
                 setUsername('');
             }
         } catch (error: unknown) {
+            if (
+                isLogin
+                && error instanceof ApiError
+                && error.code === 'session_conflict'
+                && typeof error.payload?.challenge === 'string'
+            ) {
+                const challenge = error.payload.challenge;
+                Alert.alert(
+                    'Account already active',
+                    'This account is signed in on another device. Do you want to stay signed in on this device?',
+                    [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                            text: 'Stay here',
+                            onPress: () => {
+                                claimSession(challenge);
+                            },
+                        },
+                    ],
+                    { cancelable: false },
+                );
+                return;
+            }
+
             let alertTitle = 'Authentication Error';
             let errorMsg = 'Something went wrong. Please try again.';
             if (error instanceof Error) {

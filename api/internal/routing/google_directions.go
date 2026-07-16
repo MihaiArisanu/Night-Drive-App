@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"math"
 	"net/http"
 	"net/url"
@@ -15,8 +16,9 @@ import (
 
 const (
 	defaultDirectionsURL        = "https://maps.googleapis.com/maps/api/directions/json"
-	detourClearanceMeters       = 300.0
-	maxDetourAttempts           = 4
+	detourClearanceMeters       = 120.0
+	detourClearanceStepMeters   = 240.0
+	maxDetourAttempts           = 6
 	earthRadiusMeters           = 6_371_000.0
 	minimumStreetOverlapMeters  = 75.0
 	maximumParallelAngleDegrees = 35.0
@@ -37,6 +39,7 @@ type AvoidanceZone struct {
 	Center       Coordinate
 	RadiusMeters float64
 	Paths        [][]Coordinate
+	Polygon      []Coordinate
 }
 
 type PlanRequest struct {
@@ -50,6 +53,17 @@ type PlanResult struct {
 	DistanceMeters  int          `json:"distance_meters"`
 	DurationSeconds int          `json:"duration_seconds"`
 	UsedDetour      bool         `json:"used_detour"`
+	Steps           []RouteStep  `json:"steps"`
+}
+
+type RouteStep struct {
+	Instruction     string       `json:"instruction"`
+	Maneuver        string       `json:"maneuver"`
+	DistanceMeters  int          `json:"distanceMeters"`
+	DurationSeconds int          `json:"durationSeconds"`
+	Start           Coordinate   `json:"start"`
+	End             Coordinate   `json:"end"`
+	Coordinates     []Coordinate `json:"coordinates"`
 }
 
 type Planner interface {
@@ -78,12 +92,13 @@ func NewGoogleDirectionsPlanner(apiKey string, client *http.Client) (*GoogleDire
 
 type routeWaypoint struct {
 	Coordinate Coordinate
-	Via        bool
+	Hidden     bool
 }
 
 type routeCandidate struct {
 	coordinates     []Coordinate
 	legs            [][]Coordinate
+	steps           []RouteStep
 	distanceMeters  int
 	durationSeconds int
 }
@@ -93,6 +108,12 @@ type routeConflict struct {
 	legIndex     int
 	segmentStart Coordinate
 	segmentEnd   Coordinate
+	spanMeters   float64
+}
+
+type detourPlan struct {
+	coordinates    []Coordinate
+	clearanceLevel int
 }
 
 func (p *GoogleDirectionsPlanner) Plan(
@@ -108,8 +129,9 @@ func (p *GoogleDirectionsPlanner) Plan(
 		// Legacy point areas can be ignored when the user starts or finishes
 		// inside them. Street corridors use a short endpoint allowance instead,
 		// so the rest of a long street remains blocked.
-		if len(zone.Paths) == 0 && (haversineMeters(request.Origin, zone.Center) <= zone.RadiusMeters ||
-			haversineMeters(request.Destination, zone.Center) <= zone.RadiusMeters) {
+		if len(zone.Paths) == 0 && len(zone.Polygon) == 0 &&
+			(haversineMeters(request.Origin, zone.Center) <= zone.RadiusMeters ||
+				haversineMeters(request.Destination, zone.Center) <= zone.RadiusMeters) {
 			continue
 		}
 		effectiveZones = append(effectiveZones, zone)
@@ -143,13 +165,21 @@ func (p *GoogleDirectionsPlanner) Plan(
 		return nil, ErrNoCompliantRoute
 	}
 
-	detourCandidates := detourCoordinates(*conflict)
+	detourPlans := detourWaypointPlans(*conflict)
 	var bestDetour *routeCandidate
-	for index, detour := range detourCandidates {
+	successfulClearanceLevel := -1
+	for index, detour := range detourPlans {
 		if index >= maxDetourAttempts {
 			break
 		}
-		detourWaypoints := insertDetourWaypoint(waypoints, conflict.legIndex, detour)
+		if successfulClearanceLevel >= 0 && detour.clearanceLevel > successfulClearanceLevel {
+			break
+		}
+		detourWaypoints := insertDetourWaypoints(
+			waypoints,
+			conflict.legIndex,
+			detour.coordinates,
+		)
 		detourRoutes, fetchErr := p.fetchRoutes(
 			ctx,
 			request.Origin,
@@ -163,9 +193,14 @@ func (p *GoogleDirectionsPlanner) Plan(
 			}
 			continue
 		}
-		candidate := bestCompliantCandidate(detourRoutes, effectiveZones)
+		candidate := bestCompliantDetourCandidate(
+			detourRoutes,
+			effectiveZones,
+			detourWaypoints,
+		)
 		if candidate != nil && (bestDetour == nil || candidate.durationSeconds < bestDetour.durationSeconds) {
 			bestDetour = candidate
+			successfulClearanceLevel = detour.clearanceLevel
 		}
 	}
 	if bestDetour == nil {
@@ -180,6 +215,7 @@ func (candidate *routeCandidate) result(usedDetour bool) *PlanResult {
 		DistanceMeters:  candidate.distanceMeters,
 		DurationSeconds: candidate.durationSeconds,
 		UsedDetour:      usedDetour,
+		Steps:           candidate.steps,
 	}
 }
 
@@ -205,7 +241,18 @@ type googleValue struct {
 }
 
 type googleStep struct {
-	Polyline googlePolyline `json:"polyline"`
+	Distance        googleValue    `json:"distance"`
+	Duration        googleValue    `json:"duration"`
+	StartLocation   googleLocation `json:"start_location"`
+	EndLocation     googleLocation `json:"end_location"`
+	HTMLInstruction string         `json:"html_instructions"`
+	Maneuver        string         `json:"maneuver"`
+	Polyline        googlePolyline `json:"polyline"`
+}
+
+type googleLocation struct {
+	Latitude  float64 `json:"lat"`
+	Longitude float64 `json:"lng"`
 }
 
 type googlePolyline struct {
@@ -228,16 +275,13 @@ func (p *GoogleDirectionsPlanner) fetchRoutes(
 	query.Set("destination", formatCoordinate(destination))
 	query.Set("mode", "driving")
 	query.Set("units", "metric")
+	query.Set("language", "en")
 	query.Set("alternatives", strconv.FormatBool(alternatives && len(waypoints) == 0))
 	query.Set("key", p.apiKey)
 	if len(waypoints) > 0 {
 		formatted := make([]string, 0, len(waypoints))
 		for _, waypoint := range waypoints {
-			value := formatCoordinate(waypoint.Coordinate)
-			if waypoint.Via {
-				value = "via:" + value
-			}
-			formatted = append(formatted, value)
+			formatted = append(formatted, formatCoordinate(waypoint.Coordinate))
 		}
 		query.Set("waypoints", strings.Join(formatted, "|"))
 	}
@@ -271,7 +315,7 @@ func (p *GoogleDirectionsPlanner) fetchRoutes(
 
 	candidates := make([]routeCandidate, 0, len(payload.Routes))
 	for _, route := range payload.Routes {
-		candidate, decodeErr := decodeRoute(route)
+		candidate, decodeErr := decodeRoute(route, waypoints)
 		if decodeErr == nil && len(candidate.coordinates) >= 2 {
 			candidates = append(candidates, candidate)
 		}
@@ -282,17 +326,47 @@ func (p *GoogleDirectionsPlanner) fetchRoutes(
 	return candidates, nil
 }
 
-func decodeRoute(route googleRoute) (routeCandidate, error) {
+func decodeRoute(route googleRoute, waypoints []routeWaypoint) (routeCandidate, error) {
 	candidate := routeCandidate{}
-	for _, leg := range route.Legs {
+	for legIndex, leg := range route.Legs {
 		legCoordinates := make([]Coordinate, 0)
 		candidate.distanceMeters += leg.Distance.Value
 		candidate.durationSeconds += leg.Duration.Value
-		for _, step := range leg.Steps {
-			coordinates, err := decodePolyline(step.Polyline.Points)
-			if err != nil {
-				return routeCandidate{}, err
+		for stepIndex, step := range leg.Steps {
+			coordinates := make([]Coordinate, 0)
+			if step.Polyline.Points != "" {
+				var err error
+				coordinates, err = decodePolyline(step.Polyline.Points)
+				if err != nil {
+					return routeCandidate{}, err
+				}
 			}
+			start := Coordinate{Latitude: step.StartLocation.Latitude, Longitude: step.StartLocation.Longitude}
+			end := Coordinate{Latitude: step.EndLocation.Latitude, Longitude: step.EndLocation.Longitude}
+			if len(coordinates) > 0 {
+				start = coordinates[0]
+				end = coordinates[len(coordinates)-1]
+			} else {
+				coordinates = appendUniqueCoordinates(coordinates, start, end)
+			}
+			instruction := plainTextInstruction(step.HTMLInstruction)
+			if legIndex < len(waypoints) &&
+				waypoints[legIndex].Hidden &&
+				stepIndex == len(leg.Steps)-1 {
+				instruction = removeHiddenStopoverArrival(instruction)
+			}
+			if instruction == "" {
+				instruction = maneuverFallback(step.Maneuver)
+			}
+			candidate.steps = append(candidate.steps, RouteStep{
+				Instruction:     instruction,
+				Maneuver:        step.Maneuver,
+				DistanceMeters:  step.Distance.Value,
+				DurationSeconds: step.Duration.Value,
+				Start:           start,
+				End:             end,
+				Coordinates:     coordinates,
+			})
 			legCoordinates = appendUniqueCoordinates(legCoordinates, coordinates...)
 		}
 		if len(legCoordinates) > 0 {
@@ -309,6 +383,50 @@ func decodeRoute(route googleRoute) (routeCandidate, error) {
 		candidate.legs = [][]Coordinate{coordinates}
 	}
 	return candidate, nil
+}
+
+func removeHiddenStopoverArrival(instruction string) string {
+	lowerInstruction := strings.ToLower(instruction)
+	for _, marker := range []string{
+		" your destination will be",
+		" destination will be",
+	} {
+		if index := strings.Index(lowerInstruction, marker); index >= 0 {
+			return strings.TrimSpace(instruction[:index])
+		}
+	}
+	if strings.HasPrefix(lowerInstruction, "destination will be") ||
+		strings.HasPrefix(lowerInstruction, "your destination will be") {
+		return ""
+	}
+	return instruction
+}
+
+func plainTextInstruction(instruction string) string {
+	var text strings.Builder
+	inTag := false
+	for _, character := range instruction {
+		switch character {
+		case '<':
+			inTag = true
+			text.WriteByte(' ')
+		case '>':
+			inTag = false
+			text.WriteByte(' ')
+		default:
+			if !inTag {
+				text.WriteRune(character)
+			}
+		}
+	}
+	return strings.Join(strings.Fields(html.UnescapeString(text.String())), " ")
+}
+
+func maneuverFallback(maneuver string) string {
+	if maneuver == "" {
+		return "Continue on the current road"
+	}
+	return strings.ToUpper(maneuver[:1]) + strings.ReplaceAll(maneuver[1:], "-", " ")
 }
 
 func appendUniqueCoordinates(target []Coordinate, coordinates ...Coordinate) []Coordinate {
@@ -337,6 +455,83 @@ func bestCompliantCandidate(candidates []routeCandidate, zones []AvoidanceZone) 
 	return best
 }
 
+func bestCompliantDetourCandidate(
+	candidates []routeCandidate,
+	zones []AvoidanceZone,
+	waypoints []routeWaypoint,
+) *routeCandidate {
+	var best *routeCandidate
+	for index := range candidates {
+		candidate := &candidates[index]
+		if firstRouteConflict(*candidate, zones) != nil ||
+			hasHiddenWaypointBacktrack(*candidate, waypoints) {
+			continue
+		}
+		if best == nil || candidate.durationSeconds < best.durationSeconds {
+			best = candidate
+		}
+	}
+	return best
+}
+
+func hasHiddenWaypointBacktrack(
+	candidate routeCandidate,
+	waypoints []routeWaypoint,
+) bool {
+	if len(candidate.legs) < 2 || len(waypoints) == 0 {
+		return false
+	}
+	boundaryCount := len(candidate.legs) - 1
+	if boundaryCount > len(waypoints) {
+		boundaryCount = len(waypoints)
+	}
+	for waypointIndex := 0; waypointIndex < boundaryCount; waypointIndex++ {
+		if !waypoints[waypointIndex].Hidden {
+			continue
+		}
+		incomingBearing, hasIncoming := terminalPathBearing(
+			candidate.legs[waypointIndex],
+			true,
+		)
+		outgoingBearing, hasOutgoing := terminalPathBearing(
+			candidate.legs[waypointIndex+1],
+			false,
+		)
+		if hasIncoming && hasOutgoing &&
+			angleDifferenceDegrees(incomingBearing, outgoingBearing) >= 145 {
+			return true
+		}
+	}
+	return false
+}
+
+func terminalPathBearing(path []Coordinate, incoming bool) (float64, bool) {
+	const bearingSampleMeters = 35.0
+	if len(path) < 2 {
+		return 0, false
+	}
+	if incoming {
+		end := path[len(path)-1]
+		for index := len(path) - 2; index >= 0; index-- {
+			if haversineMeters(path[index], end) >= bearingSampleMeters || index == 0 {
+				return bearingDegrees(path[index], end), true
+			}
+		}
+		return 0, false
+	}
+	start := path[0]
+	for index := 1; index < len(path); index++ {
+		if haversineMeters(start, path[index]) >= bearingSampleMeters || index == len(path)-1 {
+			return bearingDegrees(start, path[index]), true
+		}
+	}
+	return 0, false
+}
+
+func angleDifferenceDegrees(first, second float64) float64 {
+	return math.Abs(math.Mod(first-second+540, 360) - 180)
+}
+
 func shortestCandidate(candidates []routeCandidate) *routeCandidate {
 	var best *routeCandidate
 	for index := range candidates {
@@ -358,6 +553,30 @@ func firstRouteConflict(candidate routeCandidate, zones []AvoidanceZone) *routeC
 			segmentEnd := leg[pointIndex+1]
 			segmentDistance := haversineMeters(segmentStart, segmentEnd)
 			for zoneIndex, zone := range zones {
+				if len(zone.Polygon) >= 3 {
+					if !routeSegmentConflictsWithPolygon(segmentStart, segmentEnd, zone) {
+						continue
+					}
+					originInside := hasEndpoints && pointIsInsideOrNearPolygon(origin, zone)
+					if originInside && pointIsInsideOrNearPolygon(segmentStart, zone) {
+						continue
+					}
+					remainingDistance := totalDistance - travelledDistance - segmentDistance
+					destinationInside := hasEndpoints && pointIsInsideOrNearPolygon(destination, zone)
+					if destinationInside &&
+						pointIsInsideOrNearPolygon(segmentEnd, zone) &&
+						remainingDistance < streetEndpointEscapeMeters {
+						continue
+					}
+					return &routeConflict{
+						zone:         zone,
+						legIndex:     legIndex,
+						segmentStart: segmentStart,
+						segmentEnd:   segmentEnd,
+						spanMeters:   segmentDistance,
+					}
+				}
+
 				if len(zone.Paths) == 0 {
 					if distancePointToSegmentMeters(zone.Center, segmentStart, segmentEnd) > zone.RadiusMeters {
 						continue
@@ -367,6 +586,7 @@ func firstRouteConflict(candidate routeCandidate, zones []AvoidanceZone) *routeC
 						legIndex:     legIndex,
 						segmentStart: segmentStart,
 						segmentEnd:   segmentEnd,
+						spanMeters:   segmentDistance,
 					}
 				}
 
@@ -388,19 +608,97 @@ func firstRouteConflict(candidate routeCandidate, zones []AvoidanceZone) *routeC
 				if streetOverlap[zoneIndex] < minimumStreetOverlapMeters {
 					continue
 				}
+				spanStart, spanEnd, spanMeters, ok := streetConflictExtent(
+					candidate,
+					zone,
+					legIndex,
+				)
+				if !ok {
+					spanStart = segmentStart
+					spanEnd = segmentEnd
+					spanMeters = segmentDistance
+				}
 				conflictingZone := zone
-				conflictingZone.Center = midpointCoordinate(segmentStart, segmentEnd)
+				conflictingZone.Center = midpointCoordinate(spanStart, spanEnd)
 				return &routeConflict{
 					zone:         conflictingZone,
 					legIndex:     legIndex,
-					segmentStart: segmentStart,
-					segmentEnd:   segmentEnd,
+					segmentStart: spanStart,
+					segmentEnd:   spanEnd,
+					spanMeters:   spanMeters,
 				}
 			}
 			travelledDistance += segmentDistance
 		}
 	}
 	return nil
+}
+
+func streetConflictExtent(
+	candidate routeCandidate,
+	zone AvoidanceZone,
+	targetLegIndex int,
+) (Coordinate, Coordinate, float64, bool) {
+	if targetLegIndex < 0 || targetLegIndex >= len(candidate.legs) {
+		return Coordinate{}, Coordinate{}, 0, false
+	}
+
+	totalDistance := candidateDistanceMeters(candidate)
+	origin, destination, hasEndpoints := candidateEndpoints(candidate)
+	travelledDistance := 0.0
+	for legIndex := 0; legIndex < targetLegIndex; legIndex++ {
+		travelledDistance += pathDistanceMeters(candidate.legs[legIndex])
+	}
+
+	var start Coordinate
+	var end Coordinate
+	startDistance := 0.0
+	endDistance := 0.0
+	overlapDistance := 0.0
+	found := false
+	leg := candidate.legs[targetLegIndex]
+	for pointIndex := 0; pointIndex+1 < len(leg); pointIndex++ {
+		segmentStart := leg[pointIndex]
+		segmentEnd := leg[pointIndex+1]
+		segmentDistance := haversineMeters(segmentStart, segmentEnd)
+		if routeSegmentFollowsStreet(segmentStart, segmentEnd, zone) {
+			effectiveOverlap := segmentDistance
+			if hasEndpoints {
+				effectiveOverlap = streetOverlapOutsideEndpointAllowance(
+					zone,
+					origin,
+					destination,
+					travelledDistance,
+					segmentDistance,
+					totalDistance,
+				)
+			}
+			if effectiveOverlap > 0 {
+				if !found {
+					start = segmentStart
+					startDistance = travelledDistance
+					found = true
+				}
+				end = segmentEnd
+				endDistance = travelledDistance + segmentDistance
+				overlapDistance += effectiveOverlap
+			}
+		}
+		travelledDistance += segmentDistance
+	}
+
+	if !found || overlapDistance < minimumStreetOverlapMeters {
+		return Coordinate{}, Coordinate{}, 0, false
+	}
+	return start, end, math.Max(overlapDistance, endDistance-startDistance), true
+}
+
+func pathDistanceMeters(path []Coordinate) float64 {
+	total := 0.0
+	for index := 0; index+1 < len(path); index++ {
+		total += haversineMeters(path[index], path[index+1])
+	}
+	return total
 }
 
 func routeSegmentFollowsStreet(start, end Coordinate, zone AvoidanceZone) bool {
@@ -559,10 +857,10 @@ func midpointCoordinate(first, second Coordinate) Coordinate {
 	}
 }
 
-func insertDetourWaypoint(
+func insertDetourWaypoints(
 	waypoints []routeWaypoint,
 	legIndex int,
-	detour Coordinate,
+	detourCoordinates []Coordinate,
 ) []routeWaypoint {
 	insertAt := legIndex
 	if insertAt < 0 {
@@ -571,14 +869,19 @@ func insertDetourWaypoint(
 	if insertAt > len(waypoints) {
 		insertAt = len(waypoints)
 	}
-	result := make([]routeWaypoint, 0, len(waypoints)+1)
+	result := make([]routeWaypoint, 0, len(waypoints)+len(detourCoordinates))
 	result = append(result, waypoints[:insertAt]...)
-	result = append(result, routeWaypoint{Coordinate: detour, Via: true})
+	for _, coordinate := range detourCoordinates {
+		result = append(result, routeWaypoint{
+			Coordinate: coordinate,
+			Hidden:     true,
+		})
+	}
 	result = append(result, waypoints[insertAt:]...)
 	return result
 }
 
-func detourCoordinates(conflict routeConflict) []Coordinate {
+func detourWaypointPlans(conflict routeConflict) []detourPlan {
 	startX, startY := projectMeters(conflict.segmentStart, conflict.zone.Center)
 	endX, endY := projectMeters(conflict.segmentEnd, conflict.zone.Center)
 	directionX := endX - startX
@@ -587,17 +890,102 @@ func detourCoordinates(conflict routeConflict) []Coordinate {
 	if length < 1 {
 		directionX, directionY, length = 1, 0, 1
 	}
-	perpendicularX := -directionY / length
-	perpendicularY := directionX / length
-	nearDistance := conflict.zone.RadiusMeters + detourClearanceMeters
-	farDistance := nearDistance + 250
+	directionX /= length
+	directionY /= length
+	perpendicularX := -directionY
+	perpendicularY := directionX
 
-	return []Coordinate{
-		unprojectMeters(perpendicularX*nearDistance, perpendicularY*nearDistance, conflict.zone.Center),
-		unprojectMeters(-perpendicularX*nearDistance, -perpendicularY*nearDistance, conflict.zone.Center),
-		unprojectMeters(perpendicularX*farDistance, perpendicularY*farDistance, conflict.zone.Center),
-		unprojectMeters(-perpendicularX*farDistance, -perpendicularY*farDistance, conflict.zone.Center),
+	blockedRadius := avoidanceBoundingRadiusMeters(conflict.zone)
+	routeSpan := math.Max(conflict.spanMeters, length)
+	plans := make([]detourPlan, 0, maxDetourAttempts)
+	for clearanceLevel := 0; clearanceLevel < maxDetourAttempts/2; clearanceLevel++ {
+		clearance := detourClearanceMeters +
+			float64(clearanceLevel)*detourClearanceStepMeters
+		lateralDistance := blockedRadius + clearance
+		longitudinalDistance := math.Max(
+			blockedRadius+clearance,
+			routeSpan/2+clearance,
+		)
+		for _, side := range []float64{1, -1} {
+			entryX := -directionX*longitudinalDistance +
+				perpendicularX*lateralDistance*side
+			entryY := -directionY*longitudinalDistance +
+				perpendicularY*lateralDistance*side
+			exitX := directionX*longitudinalDistance +
+				perpendicularX*lateralDistance*side
+			exitY := directionY*longitudinalDistance +
+				perpendicularY*lateralDistance*side
+			plans = append(plans, detourPlan{
+				coordinates: []Coordinate{
+					unprojectMeters(entryX, entryY, conflict.zone.Center),
+					unprojectMeters(exitX, exitY, conflict.zone.Center),
+				},
+				clearanceLevel: clearanceLevel,
+			})
+		}
 	}
+	return plans
+}
+
+func avoidanceBoundingRadiusMeters(zone AvoidanceZone) float64 {
+	radius := zone.RadiusMeters
+	for _, point := range zone.Polygon {
+		radius = math.Max(
+			radius,
+			haversineMeters(zone.Center, point)+zone.RadiusMeters,
+		)
+	}
+	return radius
+}
+
+func routeSegmentConflictsWithPolygon(start, end Coordinate, zone AvoidanceZone) bool {
+	if pointIsInsideOrNearPolygon(start, zone) || pointIsInsideOrNearPolygon(end, zone) {
+		return true
+	}
+	for index := range zone.Polygon {
+		next := (index + 1) % len(zone.Polygon)
+		if segmentToSegmentDistanceMeters(start, end, zone.Polygon[index], zone.Polygon[next]) <= zone.RadiusMeters {
+			return true
+		}
+	}
+	return false
+}
+
+func pointIsInsideOrNearPolygon(point Coordinate, zone AvoidanceZone) bool {
+	if pointInPolygon(point, zone.Polygon) {
+		return true
+	}
+	for index := range zone.Polygon {
+		next := (index + 1) % len(zone.Polygon)
+		if distancePointToSegmentMeters(point, zone.Polygon[index], zone.Polygon[next]) <= zone.RadiusMeters {
+			return true
+		}
+	}
+	return false
+}
+
+func pointInPolygon(point Coordinate, polygon []Coordinate) bool {
+	if len(polygon) < 3 {
+		return false
+	}
+	inside := false
+	previous := len(polygon) - 1
+	for current := 0; current < len(polygon); current++ {
+		first := polygon[current]
+		second := polygon[previous]
+		crossesLatitude := (first.Latitude > point.Latitude) != (second.Latitude > point.Latitude)
+		if crossesLatitude {
+			longitudeAtLatitude := (second.Longitude-first.Longitude)*
+				(point.Latitude-first.Latitude)/
+				(second.Latitude-first.Latitude) +
+				first.Longitude
+			if point.Longitude < longitudeAtLatitude {
+				inside = !inside
+			}
+		}
+		previous = current
+	}
+	return inside
 }
 
 func distancePointToSegmentMeters(point, start, end Coordinate) float64 {

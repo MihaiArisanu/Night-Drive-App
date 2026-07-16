@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -38,7 +39,9 @@ func DislikesHandler(database *sql.DB, streetResolver streets.Resolver) http.Han
 
 		case http.MethodPost:
 			var req models.DislikeRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			decoder := json.NewDecoder(io.LimitReader(r.Body, 64*1024))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&req); err != nil {
 				RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid request body", nil)
 				return
 			}
@@ -48,19 +51,37 @@ func DislikesHandler(database *sql.DB, streetResolver streets.Resolver) http.Han
 			if req.CoverageType == "" {
 				req.CoverageType = "street"
 			}
-			if !validCoordinates(req.Coordinates) || req.Reason == "" || len(req.Reason) > 255 {
-				RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid coordinates or street name", nil)
+			if req.Reason == "" || len(req.Reason) > 255 {
+				RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid avoidance zone name", nil)
 				return
 			}
-			if req.CoverageType != "street" && req.CoverageType != "area" {
-				RespondWithError(w, http.StatusBadRequest, "invalid_coverage_type", "Coverage type must be street or area", nil)
+			if req.CoverageType != "street" && req.CoverageType != "area" && req.CoverageType != "polygon" {
+				RespondWithError(w, http.StatusBadRequest, "invalid_coverage_type", "Coverage type must be street, area or polygon", nil)
+				return
+			}
+			if req.CoverageType == "polygon" {
+				if len(req.Polygon) < 3 || len(req.Polygon) > 80 {
+					RespondWithError(w, http.StatusBadRequest, "invalid_polygon", "Draw a zone with between 3 and 80 points", nil)
+					return
+				}
+				for _, point := range req.Polygon {
+					if !validCoordinates(point) {
+						RespondWithError(w, http.StatusBadRequest, "invalid_polygon", "The drawn zone contains invalid coordinates", nil)
+						return
+					}
+				}
+			} else if !validCoordinates(req.Coordinates) {
+				RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid coordinates", nil)
 				return
 			}
 
 			var saveError error
-			if req.CoverageType == "area" {
+			switch req.CoverageType {
+			case "area":
 				saveError = db.SaveDislikedArea(database, userID, req)
-			} else {
+			case "polygon":
+				saveError = db.SaveDrawnDislikedArea(database, userID, req)
+			default:
 				resolutionContext, cancel := context.WithTimeout(r.Context(), 22*time.Second)
 				defer cancel()
 				geometry, err := streetResolver.Resolve(resolutionContext, streets.Selection{
@@ -87,6 +108,8 @@ func DislikesHandler(database *sql.DB, streetResolver streets.Resolver) http.Han
 					RespondWithError(w, http.StatusConflict, "disliked_area_exists", "This street or area is already blocked", saveError)
 				case errors.Is(saveError, db.ErrDislikedAreaLimitReached):
 					RespondWithError(w, http.StatusUnprocessableEntity, "disliked_area_limit", "You can block at most 50 areas", saveError)
+				case errors.Is(saveError, db.ErrInvalidDislikedPolygon):
+					RespondWithError(w, http.StatusUnprocessableEntity, "invalid_polygon", "The zone must be a simple shape between 50 m² and 5 km²", saveError)
 				default:
 					RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to save disliked area", saveError)
 				}

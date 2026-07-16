@@ -1,0 +1,6 @@
+.git
+.env
+bin
+uploads
+vendor
+**/*_test.go

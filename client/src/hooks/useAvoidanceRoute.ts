@@ -13,6 +13,17 @@ export interface AvoidanceRoute {
     duration: number;
     usedDetour: boolean;
     avoidanceZones: number;
+    steps: RouteStep[];
+}
+
+export interface RouteStep {
+    instruction: string;
+    maneuver: string;
+    distanceMeters: number;
+    durationSeconds: number;
+    start: RouteCoordinate;
+    end: RouteCoordinate;
+    coordinates: RouteCoordinate[];
 }
 
 interface UseAvoidanceRouteOptions {
@@ -29,6 +40,7 @@ interface RoutePlanResponse {
     duration?: number;
     used_detour?: boolean;
     avoidance_zones?: number;
+    steps?: RouteStep[];
 }
 
 export function useAvoidanceRoute({
@@ -99,6 +111,7 @@ export function useAvoidanceRoute({
                     duration: Number(response.duration) || 0,
                     usedDetour: response.used_detour === true,
                     avoidanceZones: Number(response.avoidance_zones) || 0,
+                    steps: Array.isArray(response.steps) ? response.steps : [],
                 });
             } catch (routeError) {
                 if (abortController.signal.aborted) {

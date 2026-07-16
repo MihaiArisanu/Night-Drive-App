@@ -2,14 +2,15 @@ package handlers
 
 import (
 	"context"
-	"errors"
-
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"math"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -85,7 +86,7 @@ func GetJWTKey() []byte {
 	return jwtSecret
 }
 
-func LoginHandler(database *sql.DB, hub *ws.Hub, rdb *redis.Client) http.HandlerFunc {
+func LoginHandler(database *sql.DB, rdb *redis.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
@@ -115,49 +116,63 @@ func LoginHandler(database *sql.DB, hub *ws.Hub, rdb *redis.Client) http.Handler
 			return
 		}
 
-		kickMsg := map[string]string{
-			"type":    "session_invalidated",
-			"message": "Te-ai logat de pe alt dispozitiv.",
+		deviceID := strings.TrimSpace(creds.DeviceID)
+		if deviceID == "" {
+			// Older clients do not provide a stable device identifier. Giving
+			// every login a unique value keeps the single-session guarantee,
+			// although those clients will see the confirmation on every login.
+			deviceID = "legacy-login:" + uuid.NewString()
 		}
-		kickBytes, _ := json.Marshal(kickMsg)
 
-		hub.SendToUser(user.ID, kickBytes)
-
-		jwtKey := GetJWTKey()
-
-		token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-			"user_id": user.ID,
-			"exp":     time.Now().Add(72 * time.Hour).Unix(),
-		})
-		tokenString, err := token.SignedString(jwtKey)
+		sessionID := uuid.NewString()
+		accessToken, refreshToken, err := issueSessionTokens(user.ID, sessionID)
 		if err != nil {
-			RespondWithError(w, http.StatusInternalServerError, "api_error", "Could not generate token", nil)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Could not generate session tokens", err)
 			return
 		}
 
-		refreshToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-			"user_id": user.ID,
-			"type":    "refresh",
-			"exp":     time.Now().Add(30 * 24 * time.Hour).Unix(),
-		})
-		refreshTokenString, err := refreshToken.SignedString(jwtKey)
+		started, activeSession, err := db.StartAuthSession(
+			r.Context(),
+			rdb,
+			user.ID,
+			db.AuthSession{
+				SessionID: sessionID,
+				DeviceID:  deviceID,
+				CreatedAt: time.Now().UTC(),
+			},
+			refreshToken,
+		)
 		if err != nil {
-			RespondWithError(w, http.StatusInternalServerError, "api_error", "Could not generate refresh token", err)
+			RespondWithError(w, http.StatusServiceUnavailable, "auth_unavailable", "Could not start login session", err)
+			return
+		}
+		if !started {
+			if activeSession == nil {
+				RespondWithError(w, http.StatusConflict, "session_conflict", "This account is already active on another device", nil)
+				return
+			}
+			challenge, err := db.CreateLoginChallenge(r.Context(), rdb, db.LoginChallenge{
+				UserID:            user.ID,
+				DeviceID:          deviceID,
+				ExpectedSessionID: activeSession.SessionID,
+			})
+			if err != nil {
+				RespondWithError(w, http.StatusServiceUnavailable, "auth_unavailable", "Could not prepare session confirmation", err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":      "session_conflict",
+				"message":    "This account is already active on another device",
+				"challenge":  challenge,
+				"expires_in": int(db.LoginChallengeTTL.Seconds()),
+			})
 			return
 		}
 
-		ctx := context.Background()
-		if err := rdb.Set(ctx, "refresh_token:"+user.ID, refreshTokenString, 30*24*time.Hour).Err(); err != nil {
-			RespondWithError(w, http.StatusInternalServerError, "api_error", "Could not save refresh token", err)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
-			"access_token":  tokenString,
-			"refresh_token": refreshTokenString,
-			"user_id":       user.ID,
-		})
+		writeSessionTokens(w, accessToken, refreshToken, user.ID)
 	}
 }
 
@@ -181,7 +196,7 @@ func RefreshTokenHandler(database *sql.DB, rdb *redis.Client) http.HandlerFunc {
 		claims := jwt.MapClaims{}
 		token, err := jwt.ParseWithClaims(req.RefreshToken, claims, func(token *jwt.Token) (interface{}, error) {
 			return jwtKey, nil
-		})
+		}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
 
 		if err != nil || !token.Valid {
 			RespondWithError(w, http.StatusUnauthorized, "bad_request", "Invalid or expired refresh token", nil)
@@ -199,7 +214,25 @@ func RefreshTokenHandler(database *sql.DB, rdb *redis.Client) http.HandlerFunc {
 			return
 		}
 
-		ctx := context.Background()
+		ctx := r.Context()
+		sessionID, _ := claims["sid"].(string)
+		activeSession, err := db.GetAuthSession(ctx, rdb, userID)
+		if err != nil {
+			RespondWithError(w, http.StatusServiceUnavailable, "auth_unavailable", "Authentication service unavailable", err)
+			return
+		}
+		if sessionID == "" {
+			if activeSession != nil {
+				sessionID = activeSession.SessionID
+			} else {
+				sessionID = uuid.NewString()
+			}
+		}
+		if activeSession != nil && activeSession.SessionID != sessionID {
+			RespondWithError(w, http.StatusUnauthorized, "session_replaced", "This account is active on another device", nil)
+			return
+		}
+
 		storedToken, err := rdb.Get(ctx, "refresh_token:"+userID).Result()
 		if err != nil || storedToken != req.RefreshToken {
 			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Invalid or expired refresh token", nil)
@@ -212,38 +245,77 @@ func RefreshTokenHandler(database *sql.DB, rdb *redis.Client) http.HandlerFunc {
 			return
 		}
 
-		newAccessToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-			"user_id": user.ID,
-			"exp":     time.Now().Add(72 * time.Hour).Unix(),
-		})
-		newAccessTokenString, err := newAccessToken.SignedString(jwtKey)
+		newAccessToken, newRefreshToken, err := issueSessionTokens(user.ID, sessionID)
 		if err != nil {
-			RespondWithError(w, http.StatusInternalServerError, "api_error", "Could not generate new access token", nil)
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Could not generate new session tokens", err)
 			return
 		}
 
-		newRefreshToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-			"user_id": user.ID,
-			"type":    "refresh",
-			"exp":     time.Now().Add(30 * 24 * time.Hour).Unix(),
-		})
-		newRefreshTokenString, err := newRefreshToken.SignedString(jwtKey)
-		if err != nil {
-			RespondWithError(w, http.StatusInternalServerError, "api_error", "Could not generate new refresh token", err)
-			return
+		if activeSession == nil {
+			started, _, err := db.StartAuthSession(ctx, rdb, user.ID, db.AuthSession{
+				SessionID: sessionID,
+				DeviceID:  "legacy-refresh",
+				CreatedAt: time.Now().UTC(),
+			}, newRefreshToken)
+			if err != nil {
+				RespondWithError(w, http.StatusServiceUnavailable, "auth_unavailable", "Could not recover login session", err)
+				return
+			}
+			if !started {
+				RespondWithError(w, http.StatusUnauthorized, "session_replaced", "This account is active on another device", nil)
+				return
+			}
+		} else {
+			rotated, err := db.RotateSessionRefreshToken(ctx, rdb, user.ID, sessionID, newRefreshToken)
+			if err != nil {
+				RespondWithError(w, http.StatusServiceUnavailable, "auth_unavailable", "Could not refresh login session", err)
+				return
+			}
+			if !rotated {
+				RespondWithError(w, http.StatusUnauthorized, "session_replaced", "This account is active on another device", nil)
+				return
+			}
 		}
 
-		if err := rdb.Set(ctx, "refresh_token:"+userID, newRefreshTokenString, 30*24*time.Hour).Err(); err != nil {
-			RespondWithError(w, http.StatusInternalServerError, "api_error", "Could not save new refresh token", err)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
-			"access_token":  newAccessTokenString,
-			"refresh_token": newRefreshTokenString,
-		})
+		writeSessionTokens(w, newAccessToken, newRefreshToken, user.ID)
 	}
+}
+
+func issueSessionTokens(userID, sessionID string) (string, string, error) {
+	now := time.Now().UTC()
+	jwtKey := GetJWTKey()
+	accessToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"user_id": userID,
+		"sid":     sessionID,
+		"iat":     now.Unix(),
+		"exp":     now.Add(72 * time.Hour).Unix(),
+	})
+	accessTokenString, err := accessToken.SignedString(jwtKey)
+	if err != nil {
+		return "", "", fmt.Errorf("sign access token: %w", err)
+	}
+	refreshToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"user_id": userID,
+		"sid":     sessionID,
+		"type":    "refresh",
+		"iat":     now.Unix(),
+		"exp":     now.Add(db.AuthSessionTTL).Unix(),
+	})
+	refreshTokenString, err := refreshToken.SignedString(jwtKey)
+	if err != nil {
+		return "", "", fmt.Errorf("sign refresh token: %w", err)
+	}
+	return accessTokenString, refreshTokenString, nil
+}
+
+func writeSessionTokens(w http.ResponseWriter, accessToken, refreshToken, userID string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(map[string]string{
+		"access_token":  accessToken,
+		"refresh_token": refreshToken,
+		"user_id":       userID,
+	})
 }
 
 func SearchUserHandler(database *sql.DB) http.HandlerFunc {
@@ -556,12 +628,13 @@ func LogoutHandler(rdb *redis.Client) http.HandlerFunc {
 			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
 			return
 		}
+		sessionID, ok := r.Context().Value(SessionIDKey).(string)
+		if !ok || sessionID == "" {
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
+			return
+		}
 
-		ctx := r.Context()
-		pipe := rdb.TxPipeline()
-		pipe.Del(ctx, "refresh_token:"+userID)
-		pipe.Del(ctx, "live_loc:"+userID)
-		if _, err := pipe.Exec(ctx); err != nil {
+		if _, err := db.EndAuthSession(r.Context(), rdb, userID, sessionID); err != nil {
 			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to end session", err)
 			return
 		}

@@ -230,7 +230,11 @@ func EvaluateGroupStopsHandler(database *sql.DB, rdb *redis.Client) http.Handler
 			return
 		}
 		resolvedStopIDs := make([]string, 0)
-		for _, stop := range stops {
+		// Stops are an ordered queue. Only the first pending stop may advance;
+		// later stops can be geographically close to the current leg but must
+		// remain pending until they become the driver's active stop.
+		if len(stops) > 0 {
+			stop := stops[0]
 			ahead, reliable, reached := groupStopProgress(r.Context(), rdb, userID, stop.Coordinates)
 			if reached || (reliable && !ahead) {
 				if err := db.ResolveGroupStopForMember(r.Context(), database, stop.ID, userID, "completed"); err != nil {
@@ -244,6 +248,65 @@ func EvaluateGroupStopsHandler(database *sql.DB, rdb *redis.Client) http.Handler
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		json.NewEncoder(w).Encode(map[string][]string{"resolvedStopIds": resolvedStopIDs})
+	}
+}
+
+func CancelGroupStopHandler(database *sql.DB, hub *ws.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
+			return
+		}
+		userID, ok := r.Context().Value(UserIDKey).(string)
+		if !ok || userID == "" {
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
+			return
+		}
+		groupID := r.PathValue("id")
+		stopID := r.PathValue("stopId")
+		if _, err := uuid.Parse(groupID); err != nil {
+			RespondWithError(w, http.StatusBadRequest, "invalid_group_id", "Invalid group ID", nil)
+			return
+		}
+		if _, err := uuid.Parse(stopID); err != nil {
+			RespondWithError(w, http.StatusBadRequest, "invalid_stop_id", "Invalid stop ID", nil)
+			return
+		}
+
+		result, err := db.CancelGroupStop(r.Context(), database, groupID, stopID, userID)
+		if err != nil {
+			switch {
+			case errors.Is(err, db.ErrGroupNotFound), errors.Is(err, db.ErrGroupStopNotFound):
+				RespondWithError(w, http.StatusNotFound, "group_stop_not_found", "Active group stop not found", nil)
+			case errors.Is(err, db.ErrGroupAccessDenied):
+				RespondWithError(w, http.StatusForbidden, "group_access_denied", "You are not a member of this group", nil)
+			case errors.Is(err, db.ErrGroupNotActive):
+				RespondWithError(w, http.StatusConflict, "group_not_active", "Stops can be cancelled only in an active group", nil)
+			default:
+				RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to cancel group stop", err)
+			}
+			return
+		}
+
+		if result.Cancellation.CancelledForAll {
+			message, marshalErr := json.Marshal(map[string]interface{}{
+				"type":    "GROUP_STOP_CANCELLED",
+				"payload": result.Cancellation,
+			})
+			if marshalErr == nil {
+				for _, memberID := range result.MemberIDs {
+					if memberID != userID {
+						hub.SendToUser(memberID, message)
+					}
+				}
+			} else {
+				log.Printf("Failed to marshal group stop cancellation: %v", marshalErr)
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		json.NewEncoder(w).Encode(result.Cancellation)
 	}
 }
 

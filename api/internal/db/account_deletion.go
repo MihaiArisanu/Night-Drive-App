@@ -76,6 +76,7 @@ func DeleteUserAccount(ctx context.Context, database *sql.DB, userID string) (st
 func DeleteUserRedisData(ctx context.Context, rdb *redis.Client, userID string) error {
 	keys := []string{
 		"refresh_token:" + userID,
+		"auth_session:" + userID,
 		"live_loc:" + userID,
 		"zen_session:" + userID,
 		"active_route:" + userID,

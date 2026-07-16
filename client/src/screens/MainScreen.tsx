@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { View, Text, TouchableOpacity, Keyboard, Platform, PermissionsAndroid, StyleSheet, Modal, Animated, PanResponder, Alert } from "react-native";
-import MapView, { PROVIDER_GOOGLE, Marker, Circle, Polyline } from "react-native-maps";
+import MapView, { PROVIDER_GOOGLE, Marker, Polyline } from "react-native-maps";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Search, MapPin, Navigation, Users, LocateFixed, Map, XCircle, Mic } from "lucide-react-native";
 import Geolocation from "react-native-geolocation-service";
@@ -35,6 +35,8 @@ import { usePushNotifications } from '../hooks/usePushNotifications';
 import { useGroupVoice } from '../hooks/useGroupVoice';
 import { useAvoidanceRoute } from '../hooks/useAvoidanceRoute';
 import { useGroupStopProgress } from '../hooks/useGroupStopProgress';
+import { maneuverSymbol, useTurnByTurn } from '../hooks/useTurnByTurn';
+import { useDrivingFocusMode } from '../hooks/useDrivingFocusMode';
 
 import { useSettingsStore } from '../store/useSettingsStore';
 import { applyGroupSnapshot, GroupSnapshot } from '../services/groupSession';
@@ -65,6 +67,20 @@ class ZenRouteError extends Error {
   }
 }
 
+function distanceBetweenMeters(
+  first: { latitude: number; longitude: number },
+  second: { latitude: number; longitude: number },
+) {
+  const earthRadius = 6371000;
+  const latitudeDelta = (second.latitude - first.latitude) * Math.PI / 180;
+  const longitudeDelta = (second.longitude - first.longitude) * Math.PI / 180;
+  const firstLatitude = first.latitude * Math.PI / 180;
+  const secondLatitude = second.latitude * Math.PI / 180;
+  const value = Math.sin(latitudeDelta / 2) ** 2
+    + Math.cos(firstLatitude) * Math.cos(secondLatitude) * Math.sin(longitudeDelta / 2) ** 2;
+  return earthRadius * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
+}
+
 export default function MainScreen() {
   const insets = useSafeAreaInsets();
   const mapRef = useRef<MapView>(null);
@@ -82,7 +98,7 @@ export default function MainScreen() {
   const [routeInfo, setRouteInfo] = useState<{ distance: number, duration: number } | null>(null);
 
   const [isSearching, setIsSearching] = useState(false);
-  const [searchSessionId, setSearchSessionId] = useState(0);
+  const [, setSearchSessionId] = useState(0);
   const [pendingSearch, setPendingSearch] = useState<{ coords: { latitude: number, longitude: number }, name: string } | null>(null);
   const [isSafetyLockVisible, setIsSafetyLockVisible] = useState(false);
 
@@ -94,10 +110,12 @@ export default function MainScreen() {
   const autoStartTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastActiveGroupId = useRef<string | null>(null);
   const lastStartedGroupDestination = useRef<string | null>(null);
+  const lastActiveLegKey = useRef<string | null>(null);
 
   const [showRideInvite, setShowRideInvite] = useState(false);
   const [inviteData, setInviteData] = useState<InviteData | null>(null);
   const [isUpdatingGroupRoute, setIsUpdatingGroupRoute] = useState(false);
+  const [isCancellingStop, setIsCancellingStop] = useState(false);
 
   const {
     isDNDActive,
@@ -113,6 +131,7 @@ export default function MainScreen() {
     setGroupDestination,
     setGroupVersion,
     addGroupStop,
+    removeGroupStop,
     removePendingGroupInvite,
   } = useSettingsStore();
   const isCurrentUserGroupOwner = Boolean(activeGroupId && userId && groupOwnerId === userId);
@@ -132,7 +151,6 @@ export default function MainScreen() {
   const [selectedLocation, setSelectedLocation] = useState<{ latitude: number, longitude: number } | null>(null);
 
   const {
-    isRerouting,
     routeOrigin,
     initRouteOrigin,
     finishRerouting,
@@ -146,23 +164,40 @@ export default function MainScreen() {
     latitudeDelta: 0.002,
     longitudeDelta: 0.002,
   });
+  const isDrivingFocusPaused = isSearching
+    || Boolean(pendingSearch)
+    || isSafetyLockVisible
+    || isModalVisible
+    || isReportModalVisible
+    || showRideInvite;
+  const {
+    isFocusModeActive: isDrivingFocusMode,
+    registerInteraction,
+  } = useDrivingFocusMode({ paused: isDrivingFocusPaused });
 
   const currentDestination = groupDestination || destination;
-
-  const currentWaypoints = [];
-  if (rendezvousPoint && groupDestination) currentWaypoints.push(rendezvousPoint);
-  currentWaypoints.push(...groupStops);
-  if (stopDestination) currentWaypoints.push(stopDestination);
+  const isRendezvousLeg = Boolean(rendezvousPoint && groupDestination);
+  const activeGroupStop = isRendezvousLeg ? null : groupStops[0] || null;
+  const activeLocalStop = !activeGroupId && !isRendezvousLeg ? stopDestination : null;
+  const activeLegDestination = rendezvousPoint && groupDestination
+    ? rendezvousPoint
+    : activeGroupStop || activeLocalStop || currentDestination;
+  const activeStop = activeGroupStop || activeLocalStop;
+  const activeLegLabel = isRendezvousLeg
+    ? 'the meeting point'
+    : activeGroupStop?.name || (activeLocalStop ? 'the stop' : groupDestination?.name || 'your destination');
+  const activeLegKey = activeLegDestination
+    ? `${activeLegDestination.latitude.toFixed(6)}:${activeLegDestination.longitude.toFixed(6)}`
+    : null;
 
   const avoidanceRevision = dislikedAreas
     .map(area => `${area.id}:${area.latitude.toFixed(6)}:${area.longitude.toFixed(6)}`)
     .sort()
     .join('|');
   const normalPlannedRoute = useAvoidanceRoute({
-    enabled: Boolean(currentDestination && routeOrigin && !isZenSession),
+    enabled: Boolean(activeLegDestination && routeOrigin && !isZenSession),
     origin: routeOrigin,
-    destination: currentDestination,
-    waypoints: currentWaypoints,
+    destination: activeLegDestination,
     avoidanceRevision,
   });
   const zenPlannedRoute = useAvoidanceRoute({
@@ -171,6 +206,12 @@ export default function MainScreen() {
     destination: zenDestination,
     avoidanceRevision,
   });
+  const turnInstruction = useTurnByTurn(
+    normalPlannedRoute.route?.steps || [],
+    activeCoords,
+    Boolean(isNavigating && !isZenSession),
+    activeLegLabel,
+  );
 
   const panY = useRef(new Animated.Value(0)).current;
   const cancelThreshold = -120;
@@ -258,6 +299,41 @@ export default function MainScreen() {
   useActiveRouteSync(routeCoordinates, isNavigating);
   useGroupStopProgress(activeGroupId, groupStops, activeCoords.latitude);
   usePushNotifications();
+
+  useEffect(() => {
+    const previousLegKey = lastActiveLegKey.current;
+    lastActiveLegKey.current = activeLegKey;
+    if (
+      !previousLegKey
+      || !activeLegKey
+      || previousLegKey === activeLegKey
+      || !isNavigating
+      || activeCoords.latitude === 0
+    ) {
+      return;
+    }
+    setRouteCoordinates([]);
+    setRouteInfo(null);
+    initRouteOrigin(activeCoords);
+  }, [activeCoords, activeLegKey, initRouteOrigin, isNavigating]);
+
+  useEffect(() => {
+    if (
+      !stopDestination
+      || activeGroupId
+      || !isNavigating
+      || activeCoords.latitude === 0
+      || distanceBetweenMeters(activeCoords, stopDestination) > 100
+    ) {
+      return;
+    }
+    setStopDestination(null);
+    Toast.show({
+      type: 'success',
+      text1: 'Stop reached',
+      text2: 'Continuing to your final destination.',
+    });
+  }, [activeCoords, activeGroupId, isNavigating, stopDestination]);
 
   useEffect(() => {
     const previousGroupId = lastActiveGroupId.current;
@@ -410,7 +486,7 @@ export default function MainScreen() {
     setInviteData(null);
   };
 
-  const handleFriendClick = async (friendId: string, friendName: string) => {
+  const handleFriendClick = async (friendId: string, _friendName: string) => {
     if (isDNDActive || !userId || !userName) {
       return;
     }
@@ -427,7 +503,7 @@ export default function MainScreen() {
         PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
       ]);
       return granted['android.permission.ACCESS_FINE_LOCATION'] === PermissionsAndroid.RESULTS.GRANTED;
-    } catch (err) {
+    } catch {
       return false;
     }
   };
@@ -545,13 +621,13 @@ export default function MainScreen() {
     setIsSearching(true);
   };
 
-  const sendGroupStop = async (groupId: string, coords: { latitude: number, longitude: number }, name: string) => {
+  const sendGroupStop = async (groupId: string, stopCoords: { latitude: number, longitude: number }, name: string) => {
     try {
       const update = await apiFetch(`/groups/${groupId}/stop`, {
         method: 'POST',
         body: JSON.stringify({
-          latitude: coords.latitude,
-          longitude: coords.longitude,
+          latitude: stopCoords.latitude,
+          longitude: stopCoords.longitude,
           name: name
         })
       });
@@ -575,6 +651,58 @@ export default function MainScreen() {
       Alert.alert('Could not add group stop', message);
       return false;
     }
+  };
+
+  const cancelCurrentStop = async () => {
+    if (!activeStop || isCancellingStop) return;
+    if (!activeGroupStop || !activeGroupId) {
+      setStopDestination(null);
+      Toast.show({
+        type: 'info',
+        text1: 'Stop cancelled',
+        text2: 'Continuing to your final destination.',
+      });
+      return;
+    }
+
+    const executeCancellation = async () => {
+      setIsCancellingStop(true);
+      try {
+        const cancellation = await apiFetch(
+          `/groups/${activeGroupId}/stops/${activeGroupStop.id}`,
+          { method: 'DELETE' },
+        );
+        removeGroupStop(activeGroupStop.id);
+        if (typeof cancellation?.version === 'number') {
+          setGroupVersion(cancellation.version);
+        }
+        Toast.show({
+          type: 'info',
+          text1: cancellation?.cancelledForAll ? 'Group stop cancelled' : 'Stop skipped',
+          text2: cancellation?.cancelledForAll
+            ? 'The stop was removed for every group member.'
+            : 'The other group members will still visit this stop.',
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Please try again.';
+        Alert.alert('Could not cancel stop', message);
+      } finally {
+        setIsCancellingStop(false);
+      }
+    };
+
+    if (isCurrentUserGroupOwner) {
+      Alert.alert(
+        'Cancel for the entire group?',
+        'This stop will be removed from every member’s route.',
+        [
+          { text: 'Keep Stop', style: 'cancel' },
+          { text: 'Cancel for Everyone', style: 'destructive', onPress: executeCancellation },
+        ],
+      );
+      return;
+    }
+    await executeCancellation();
   };
 
   const handlePlaceSelect = (destCoords: { latitude: number, longitude: number }, name: string) => {
@@ -671,6 +799,7 @@ export default function MainScreen() {
   };
 
   const handleMapLongPress = (event: any) => {
+    registerInteraction();
     const { coordinate } = event.nativeEvent;
     setSelectedLocation(coordinate);
     setIsReportModalVisible(true);
@@ -830,6 +959,9 @@ export default function MainScreen() {
 
 
   const formatDistance = (dist: number) => dist < 1 ? `${(dist * 1000).toFixed(0)} m` : `${dist.toFixed(1)} km`;
+  const formatTurnDistance = (distanceMeters: number) => distanceMeters < 1000
+    ? `${Math.max(10, Math.round(distanceMeters / 10) * 10)} m`
+    : `${(distanceMeters / 1000).toFixed(distanceMeters < 10000 ? 1 : 0)} km`;
   const formatDuration = (mins: number) => {
     if (mins < 60) return `${Math.ceil(mins)} min`;
     const hours = Math.floor(mins / 60);
@@ -838,10 +970,12 @@ export default function MainScreen() {
   };
 
   return (
-    <View style={styles.container}>
-      <SafeAreaView style={styles.topSection} edges={["top"]}>
-        <TopBar onZenPress={toggleZenSession} isZenActive={isZenSession} />
-      </SafeAreaView>
+    <View style={styles.container} onTouchStart={registerInteraction}>
+      {!isDrivingFocusMode && (
+        <SafeAreaView style={styles.topSection} edges={["top"]}>
+          <TopBar onZenPress={toggleZenSession} isZenActive={isZenSession} />
+        </SafeAreaView>
+      )}
 
       <View style={styles.mapContainer}>
         <ErrorBoundary>
@@ -857,7 +991,9 @@ export default function MainScreen() {
             pitchEnabled={false}
             rotateEnabled={false}
             loadingEnabled={true}
-            mapPadding={{ top: 0, right: 0, bottom: 120, left: 0 }}
+            mapPadding={{ top: 0, right: 0, bottom: isDrivingFocusMode ? 16 : 120, left: 0 }}
+            onPress={registerInteraction}
+            onPanDrag={registerInteraction}
             onLongPress={handleMapLongPress}
           >
             {activeCoords.latitude !== 0 && (
@@ -908,28 +1044,6 @@ export default function MainScreen() {
               </Marker>
             ))}
 
-            {dislikedAreas?.map((area) => (
-              <React.Fragment key={area.id}>
-                {area.paths?.length ? area.paths.map((path, pathIndex) => (
-                  <Polyline
-                    key={`${area.id}:path:${pathIndex}`}
-                    coordinates={path}
-                    strokeWidth={3}
-                    strokeColor="rgba(239, 68, 68, 0.38)"
-                  />
-                )) : (
-                <Circle
-                  key={`${area.id}:area`}
-                  center={{ latitude: area.latitude, longitude: area.longitude }}
-                  radius={area.avoidance_radius_meters || 200}
-                  strokeWidth={1}
-                  strokeColor="rgba(239, 68, 68, 0.3)"
-                  fillColor="rgba(239, 68, 68, 0.015)"
-                />
-                )}
-              </React.Fragment>
-            ))}
-
             {rendezvousPoint && (
               <Marker coordinate={rendezvousPoint} anchor={{ x: 0.5, y: 0.5 }}>
                 <View style={styles.rendezvousMarker}>
@@ -946,6 +1060,14 @@ export default function MainScreen() {
               </Marker>
             )}
 
+            {destination && !groupDestination && (
+              <Marker coordinate={destination} anchor={{ x: 0.5, y: 1 }}>
+                <View style={styles.groupDestinationMarker}>
+                  <MapPin color="#FFF" size={28} />
+                </View>
+              </Marker>
+            )}
+
             {groupStops.map((stop) => (
               <Marker key={stop.id} coordinate={stop} anchor={{ x: 0.5, y: 1 }}>
                 <View style={styles.stopDestinationMarker}>
@@ -954,7 +1076,7 @@ export default function MainScreen() {
               </Marker>
             ))}
 
-            {currentDestination && routeOrigin && !isZenSession && normalPlannedRoute.route && (
+            {activeLegDestination && routeOrigin && !isZenSession && normalPlannedRoute.route && (
               <Polyline
                 coordinates={normalPlannedRoute.route.coordinates}
                 strokeWidth={8}
@@ -981,6 +1103,23 @@ export default function MainScreen() {
         </ErrorBoundary>
       </View>
 
+      {turnInstruction && (
+        <View style={[
+          styles.turnInstructionCard,
+          { top: insets.top + (isDrivingFocusMode ? 12 : 68) },
+        ]}>
+          <Text style={styles.turnInstructionSymbol}>{maneuverSymbol(turnInstruction.maneuver)}</Text>
+          <View style={styles.turnInstructionContent}>
+            <Text style={styles.turnInstructionDistance}>
+              {formatTurnDistance(turnInstruction.distanceMeters)}
+            </Text>
+            <Text style={styles.turnInstructionText} numberOfLines={2}>
+              {turnInstruction.instruction}
+            </Text>
+          </View>
+        </View>
+      )}
+
       <Modal visible={isSearching} animationType="fade" transparent={true}>
         <View style={[styles.searchContainer, { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)' }]}>
           <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
@@ -994,7 +1133,7 @@ export default function MainScreen() {
         </View>
       </Modal>
 
-      {activeGroupId && !isSearching && (
+      {activeGroupId && !isSearching && !isDrivingFocusMode && (
         <TouchableOpacity
           accessibilityRole="button"
           accessibilityLabel={isGroupVoiceTransmitting ? 'Stop group voice message' : 'Start group voice message'}
@@ -1017,7 +1156,7 @@ export default function MainScreen() {
         </TouchableOpacity>
       )}
 
-      {!isSearching && (
+      {!isSearching && !isDrivingFocusMode && (
         <View style={styles.bottomWrapper}>
           {isNavigating && (
             <Animated.View style={[styles.cancelBackground, { opacity: cancelOpacity }]}>
@@ -1045,6 +1184,21 @@ export default function MainScreen() {
               </View>
             )}
 
+            {isNavigating && !isZenSession && activeStop && (
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel={isCurrentUserGroupOwner && activeGroupStop ? 'Cancel stop for the entire group' : 'Cancel current stop'}
+                style={[styles.cancelStopButton, isCancellingStop && styles.cancelStopButtonDisabled]}
+                onPress={cancelCurrentStop}
+                disabled={isCancellingStop}
+              >
+                <XCircle color="#FCA5A5" size={18} />
+                <Text style={styles.cancelStopButtonText}>
+                  {isCurrentUserGroupOwner && activeGroupStop ? 'Cancel Stop for Group' : activeGroupStop ? 'Skip Stop' : 'Cancel Stop'}
+                </Text>
+              </TouchableOpacity>
+            )}
+
             <View style={styles.contentContainer}>
               <View style={{ flexDirection: 'row', gap: 15 }}>
                 <IconButton icon={<Search color="white" size={28} />} onPress={handleOpenSearch} />
@@ -1056,6 +1210,18 @@ export default function MainScreen() {
               <SpeedBox speed={speed} limit={80} />
             </View>
           </Animated.View>
+        </View>
+      )}
+
+      {!isSearching && isDrivingFocusMode && (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.drivingFocusSpeed,
+            { bottom: Math.max(insets.bottom, 16) + 12 },
+          ]}
+        >
+          <SpeedBox speed={speed} limit={80} />
         </View>
       )}
 
@@ -1207,6 +1373,12 @@ const styles = StyleSheet.create({
     width: '100%',
     zIndex: 5,
   },
+  drivingFocusSpeed: {
+    position: 'absolute',
+    right: 18,
+    zIndex: 8,
+    elevation: 10,
+  },
   groupVoiceButton: {
     position: 'absolute',
     left: 22,
@@ -1300,6 +1472,69 @@ const styles = StyleSheet.create({
     fontSize: 15,
     marginHorizontal: 10,
     fontWeight: '900',
+  },
+  cancelStopButton: {
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    backgroundColor: 'rgba(127, 29, 29, 0.28)',
+    borderWidth: 1,
+    borderColor: 'rgba(248, 113, 113, 0.4)',
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    marginTop: 4,
+  },
+  cancelStopButtonDisabled: {
+    opacity: 0.5,
+  },
+  cancelStopButtonText: {
+    color: '#FCA5A5',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  turnInstructionCard: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    zIndex: 9,
+    elevation: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(12, 12, 14, 0.96)',
+    borderWidth: 1,
+    borderColor: 'rgba(168, 85, 247, 0.55)',
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+  },
+  turnInstructionSymbol: {
+    color: '#C084FC',
+    fontSize: 40,
+    fontWeight: '800',
+    width: 54,
+    textAlign: 'center',
+    marginRight: 12,
+  },
+  turnInstructionContent: {
+    flex: 1,
+  },
+  turnInstructionDistance: {
+    color: '#C084FC',
+    fontSize: 18,
+    fontWeight: '900',
+    marginBottom: 2,
+  },
+  turnInstructionText: {
+    color: '#F4F4F5',
+    fontSize: 15,
+    fontWeight: '700',
+    lineHeight: 20,
   },
 
   stopDestinationMarker: {

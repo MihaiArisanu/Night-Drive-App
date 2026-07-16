@@ -19,7 +19,10 @@ type Hub struct {
 }
 
 type RoutingInfo struct {
+	Type            string `json:"type"`
 	TargetGroupId   string `json:"targetGroupId"`
+	TargetUserId    string `json:"targetUserId"`
+	TargetSessionId string `json:"targetSessionId"`
 	ExcludeSenderId string `json:"excludeSenderId"`
 }
 
@@ -53,6 +56,10 @@ func (h *Hub) Run() {
 		select {
 		case client := <-h.Register:
 			h.mu.Lock()
+			if previous, exists := h.Users[client.UserID]; exists && previous != client {
+				delete(h.Clients, previous)
+				close(previous.Send)
+			}
 			h.Clients[client] = true
 			h.Users[client.UserID] = client
 			h.mu.Unlock()
@@ -77,16 +84,31 @@ func (h *Hub) Run() {
 				if route.TargetGroupId != "" && client.GroupID != route.TargetGroupId {
 					continue
 				}
+				if route.TargetUserId != "" && client.UserID != route.TargetUserId {
+					continue
+				}
+				if route.TargetSessionId != "" && client.SessionID != route.TargetSessionId {
+					continue
+				}
 				if route.ExcludeSenderId != "" && client.UserID == route.ExcludeSenderId {
 					continue
 				}
 
 				select {
 				case client.Send <- message:
+					if route.Type == "session_invalidated" {
+						close(client.Send)
+						delete(h.Clients, client)
+						if h.Users[client.UserID] == client {
+							delete(h.Users, client.UserID)
+						}
+					}
 				default:
 					close(client.Send)
 					delete(h.Clients, client)
-					delete(h.Users, client.UserID)
+					if h.Users[client.UserID] == client {
+						delete(h.Users, client.UserID)
+					}
 				}
 			}
 			h.mu.Unlock()
@@ -95,10 +117,10 @@ func (h *Hub) Run() {
 }
 
 func (h *Hub) SendToUser(userID string, message []byte) bool {
-	h.mu.RLock()
-	client, ok := h.Users[userID]
-	h.mu.RUnlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 
+	client, ok := h.Users[userID]
 	if !ok {
 		return false
 	}
@@ -107,11 +129,11 @@ func (h *Hub) SendToUser(userID string, message []byte) bool {
 	case client.Send <- message:
 		return true
 	default:
-		h.mu.Lock()
 		close(client.Send)
 		delete(h.Clients, client)
-		delete(h.Users, userID)
-		h.mu.Unlock()
+		if h.Users[userID] == client {
+			delete(h.Users, userID)
+		}
 		return false
 	}
 }

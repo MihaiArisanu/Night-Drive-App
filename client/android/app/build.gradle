@@ -2,8 +2,56 @@ apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 apply plugin: "com.google.gms.google-services"
+apply plugin: "com.google.firebase.crashlytics"
 react {
     autolinkLibrariesWithApp()
+}
+
+def readClientEnvironmentValue = { String key ->
+    def environmentFile = rootProject.file("../.env")
+    if (!environmentFile.exists()) {
+        return null
+    }
+
+    def prefix = "${key}="
+    def matchingLine = environmentFile.readLines().find { line ->
+        def trimmedLine = line.trim()
+        !trimmedLine.startsWith("#") && trimmedLine.startsWith(prefix)
+    }
+    if (matchingLine == null) {
+        return null
+    }
+
+    def value = matchingLine.trim().substring(prefix.length()).trim()
+    if (
+        value.length() >= 2
+        && (
+            (value.startsWith("\"") && value.endsWith("\""))
+            || (value.startsWith("'") && value.endsWith("'"))
+        )
+    ) {
+        value = value.substring(1, value.length() - 1)
+    }
+    return value
+}
+
+def googleApiKey = project.findProperty("GOOGLE_API_GENERAL_KEY")
+    ?: System.getenv("GOOGLE_API_GENERAL_KEY")
+    ?: readClientEnvironmentValue("GOOGLE_API_GENERAL_KEY")
+
+if (!googleApiKey) {
+    throw new GradleException(
+        "GOOGLE_API_GENERAL_KEY must be configured as a Gradle property, environment variable, or in client/.env"
+    )
+}
+
+def allowCleartextTraffic = project.findProperty("ALLOW_CLEARTEXT_TRAFFIC")
+    ?: System.getenv("ALLOW_CLEARTEXT_TRAFFIC")
+    ?: readClientEnvironmentValue("ALLOW_CLEARTEXT_TRAFFIC")
+    ?: "true"
+
+if (!["true", "false"].contains(allowCleartextTraffic.toString().toLowerCase())) {
+    throw new GradleException("ALLOW_CLEARTEXT_TRAFFIC must be either true or false")
 }
 
 def enableProguardInReleaseBuilds = false
@@ -23,8 +71,11 @@ android {
         versionCode 1
         versionName "1.0"
 
-        manifestPlaceholders = [googleApiKey: GOOGLE_API_GENERAL_KEY]
-        buildConfigField "String", "GOOGLE_API_KEY", "\"${GOOGLE_API_GENERAL_KEY}\""
+        manifestPlaceholders = [
+            googleApiKey: googleApiKey,
+            usesCleartextTraffic: allowCleartextTraffic,
+        ]
+        buildConfigField "String", "GOOGLE_API_KEY", "\"${googleApiKey}\""
     }
 
     signingConfigs {

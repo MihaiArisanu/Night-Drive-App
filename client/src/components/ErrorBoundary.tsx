@@ -1,6 +1,7 @@
 import React, { Component, ErrorInfo, ReactNode } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { AlertTriangle } from "lucide-react-native";
+import { recordNonFatalError } from "../services/crashReporting";
 
 interface Props {
   children?: ReactNode;
@@ -21,6 +22,9 @@ export class ErrorBoundary extends Component<Props, State> {
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error("Uncaught error:", error, errorInfo);
+    recordNonFatalError(error, "react_error_boundary", {
+      has_component_stack: Boolean(errorInfo.componentStack),
+    }).catch(() => undefined);
   }
 
   public render() {

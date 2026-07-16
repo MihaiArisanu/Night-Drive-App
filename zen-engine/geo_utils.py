@@ -7,8 +7,7 @@ from road_network_cache import RedisRoadNetworkCache
 from road_network import (
     AvoidanceGeometry,
     RoadPathPlanner,
-    distance_point_to_path_meters,
-    haversine_meters,
+    point_is_blocked,
 )
 
 road_network_provider = OverpassRoadNetworkProvider(
@@ -29,6 +28,7 @@ async def generate_forward_path_async(
             center=(zone.latitude, zone.longitude),
             radius_meters=zone.radius_meters,
             paths=tuple(tuple(path) for path in zone.paths),
+            polygon=tuple(zone.polygon),
         )
         for zone in (excluded_zones or [])
     ]
@@ -89,14 +89,15 @@ def filter_waypoints(
         waypoint
         for waypoint in waypoints
         if not any(
-            (
-                distance_point_to_path_meters(waypoint, record.paths)
-                if record.paths
-                else haversine_meters(
-                    waypoint,
-                    (record.latitude, record.longitude),
-                )
-            ) <= record.radius_meters
+            point_is_blocked(
+                waypoint,
+                AvoidanceGeometry(
+                    center=(record.latitude, record.longitude),
+                    radius_meters=record.radius_meters,
+                    paths=tuple(tuple(path) for path in record.paths),
+                    polygon=tuple(record.polygon),
+                ),
+            )
             for record in bad_records
         )
     ]

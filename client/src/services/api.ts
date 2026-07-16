@@ -1,27 +1,57 @@
 import * as Keychain from 'react-native-keychain';
 import { API_BASE_URL } from '@env';
 import { useSettingsStore } from '../store/useSettingsStore';
+import { notifySessionInvalidated } from './sessionEvents';
+import { identifyCrashReportingUser } from './crashReporting';
 
 interface ApiFetchOptions extends RequestInit {
     skipAuthentication?: boolean;
 }
 
-interface ApiErrorBody {
+export interface ApiErrorBody {
     error?: string;
     message?: string;
+    challenge?: string;
+    expires_in?: number;
+    [key: string]: unknown;
 }
 
 export class ApiError extends Error {
     readonly status: number;
     readonly code: string;
+    readonly payload: ApiErrorBody | null;
 
-    constructor(status: number, code: string, message: string) {
+    constructor(status: number, code: string, message: string, payload: ApiErrorBody | null = null) {
         super(message);
         this.name = 'ApiError';
         this.status = status;
         this.code = code;
+        this.payload = payload;
     }
 }
+
+const DEVICE_ID_KEYCHAIN_SERVICE = 'com.nightdrive.device-identity';
+
+const createDeviceId = () => (
+    `nightdrive-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`
+);
+
+export const DeviceIdentity = {
+    getOrCreate: async () => {
+        const existing = await Keychain.getGenericPassword({
+            service: DEVICE_ID_KEYCHAIN_SERVICE,
+        });
+        if (existing && existing.password) {
+            return existing.password;
+        }
+
+        const deviceId = createDeviceId();
+        await Keychain.setGenericPassword('device', deviceId, {
+            service: DEVICE_ID_KEYCHAIN_SERVICE,
+        });
+        return deviceId;
+    },
+};
 
 export const AuthStorage = {
     saveTokens: async (accessToken: string, refreshToken: string) => {
@@ -51,6 +81,7 @@ export const AuthStorage = {
     clearTokens: async () => {
         await Keychain.resetGenericPassword();
         useSettingsStore.getState().clearSettings();
+        await identifyCrashReportingUser(null);
     },
 };
 
@@ -67,6 +98,18 @@ const processQueue = (error: any, token: string | null = null) => {
     });
     failedQueue = [];
 };
+
+const readErrorBody = async (response: Response): Promise<ApiErrorBody | null> => {
+    try {
+        return await response.clone().json() as ApiErrorBody;
+    } catch {
+        return null;
+    }
+};
+
+const isReplacedSession = (errorBody: ApiErrorBody | null) => (
+    errorBody?.error === 'session_replaced' || errorBody?.error === 'account_deleted'
+);
 
 export const apiFetch = async (endpoint: string, options: ApiFetchOptions = {}) => {
     const { skipAuthentication = false, ...requestOptions } = options;
@@ -86,13 +129,25 @@ export const apiFetch = async (endpoint: string, options: ApiFetchOptions = {}) 
     let response = await fetch(url, { ...requestOptions, headers });
 
     if (response.status === 401 && token) {
+        const authErrorBody = await readErrorBody(response);
+        if (isReplacedSession(authErrorBody)) {
+            const message = authErrorBody?.message || 'Your account is now active on another device.';
+            notifySessionInvalidated(message);
+            throw new ApiError(
+                response.status,
+                authErrorBody?.error || 'session_replaced',
+                message,
+                authErrorBody,
+            );
+        }
+
         if (isRefreshing) {
             try {
                 const newToken = await new Promise<string>((resolve, reject) => {
                     failedQueue.push({ resolve, reject });
                 });
                 headers.Authorization = `Bearer ${newToken}`;
-                return await fetch(url, { ...requestOptions, headers });
+                response = await fetch(url, { ...requestOptions, headers });
             } catch (err) {
                 throw err;
             }
@@ -102,14 +157,24 @@ export const apiFetch = async (endpoint: string, options: ApiFetchOptions = {}) 
                 const refreshToken = await AuthStorage.getRefreshToken();
                 if (!refreshToken) throw new Error("No refresh token available");
 
-                const refreshResponse = await fetch(`${API_BASE_URL}/refresh`, {
+                const refreshResponse = await fetch(`${API_BASE_URL}/auth/refresh`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ refresh_token: refreshToken })
                 });
 
                 if (!refreshResponse.ok) {
-                    throw new Error('Refresh Token invalid sau expirat.');
+                    const refreshErrorBody = await readErrorBody(refreshResponse);
+                    const message = refreshErrorBody?.message || 'Your session expired. Please log in again.';
+                    if (isReplacedSession(refreshErrorBody)) {
+                        notifySessionInvalidated(message);
+                    }
+                    throw new ApiError(
+                        refreshResponse.status,
+                        refreshErrorBody?.error || 'refresh_failed',
+                        message,
+                        refreshErrorBody,
+                    );
                 }
 
                 const refreshData = await refreshResponse.json();
@@ -128,6 +193,9 @@ export const apiFetch = async (endpoint: string, options: ApiFetchOptions = {}) 
                 isRefreshing = false;
                 processQueue(refreshErr, null);
                 await AuthStorage.clearTokens();
+                if (refreshErr instanceof ApiError) {
+                    throw refreshErr;
+                }
                 throw new Error("Session expired. Please log in again.");
             }
         }
@@ -153,10 +221,17 @@ export const apiFetch = async (endpoint: string, options: ApiFetchOptions = {}) 
             // Some upstream failures can still return plain text.
         }
 
+        if (isReplacedSession(errorBody)) {
+            notifySessionInvalidated(
+                errorBody?.message || 'Your account is now active on another device.',
+            );
+        }
+
         throw new ApiError(
             response.status,
             errorBody?.error || 'api_error',
             errorBody?.message || responseText || 'NightDrive could not complete the request.',
+            errorBody,
         );
     }
 

@@ -16,5 +16,6 @@ type DislikedArea struct {
 	StreetName            string          `json:"street_name,omitempty"`
 	AvoidanceRadiusMeters float64         `json:"avoidance_radius_meters"`
 	Paths                 [][]Coordinates `json:"paths,omitempty"`
+	Polygon               []Coordinates   `json:"polygon,omitempty"`
 	CreatedAt             time.Time       `json:"created_at"`
 }

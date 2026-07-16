@@ -15,6 +15,7 @@ const maxDislikedAreasPerUser = 50
 var (
 	ErrDislikedAreaAlreadyExists = errors.New("a disliked area already exists nearby")
 	ErrDislikedAreaLimitReached  = errors.New("disliked area limit reached")
+	ErrInvalidDislikedPolygon    = errors.New("the drawn avoidance zone is invalid")
 )
 
 func SaveDislikedStreet(
@@ -115,6 +116,74 @@ func SaveDislikedArea(dbConn *sql.DB, userID string, req models.DislikeRequest) 
 	return nil
 }
 
+func SaveDrawnDislikedArea(dbConn *sql.DB, userID string, req models.DislikeRequest) error {
+	transaction, err := prepareDislikeTransaction(dbConn, userID)
+	if err != nil {
+		return err
+	}
+	defer transaction.Rollback()
+
+	geometryJSON, err := marshalPolygonGeometry(req.Polygon)
+	if err != nil {
+		return ErrInvalidDislikedPolygon
+	}
+
+	var alreadyExists bool
+	if err := transaction.QueryRow(`
+		WITH candidate AS (
+			SELECT ST_SetSRID(ST_GeomFromGeoJSON($2), 4326) AS geometry
+		)
+		SELECT EXISTS (
+			SELECT 1
+			FROM disliked_areas, candidate
+			WHERE user_id = $1
+			  AND drawn_geometry IS NOT NULL
+			  AND ST_Equals(drawn_geometry::geometry, candidate.geometry)
+		)
+	`, userID, geometryJSON).Scan(&alreadyExists); err != nil {
+		return fmt.Errorf("check duplicate drawn area: %w", err)
+	}
+	if alreadyExists {
+		return ErrDislikedAreaAlreadyExists
+	}
+
+	var insertedID string
+	if err := transaction.QueryRow(`
+		WITH candidate AS (
+			SELECT ST_SetSRID(ST_GeomFromGeoJSON($3), 4326) AS geometry
+		)
+		INSERT INTO disliked_areas (
+			user_id,
+			location,
+			reason,
+			coverage_type,
+			drawn_geometry,
+			avoidance_radius_meters
+		)
+		SELECT
+			$1,
+			ST_Centroid(geometry)::geography,
+			$2,
+			'polygon',
+			geometry::geography,
+			15.0
+		FROM candidate
+		WHERE ST_GeometryType(geometry) = 'ST_Polygon'
+		  AND ST_IsValid(geometry)
+		  AND ST_Area(geometry::geography) BETWEEN 50.0 AND 5000000.0
+		RETURNING id
+	`, userID, req.Reason, geometryJSON).Scan(&insertedID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrInvalidDislikedPolygon
+		}
+		return fmt.Errorf("insert drawn disliked area: %w", err)
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit drawn disliked area: %w", err)
+	}
+	return nil
+}
+
 func prepareDislikeTransaction(dbConn *sql.DB, userID string) (*sql.Tx, error) {
 	transaction, err := dbConn.Begin()
 	if err != nil {
@@ -186,6 +255,7 @@ func GetDislikedAreas(dbConn *sql.DB, userID string) ([]models.DislikedArea, err
 			COALESCE(street_name, ''),
 			avoidance_radius_meters,
 			COALESCE(ST_AsGeoJSON(street_geometry), ''),
+			COALESCE(ST_AsGeoJSON(drawn_geometry), ''),
 			created_at
 		FROM disliked_areas
 		WHERE user_id = $1
@@ -200,6 +270,7 @@ func GetDislikedAreas(dbConn *sql.DB, userID string) ([]models.DislikedArea, err
 	for rows.Next() {
 		var area models.DislikedArea
 		var geometryJSON string
+		var polygonJSON string
 		if err := rows.Scan(
 			&area.ID,
 			&area.Latitude,
@@ -209,6 +280,7 @@ func GetDislikedAreas(dbConn *sql.DB, userID string) ([]models.DislikedArea, err
 			&area.StreetName,
 			&area.AvoidanceRadiusMeters,
 			&geometryJSON,
+			&polygonJSON,
 			&area.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan disliked area: %w", err)
@@ -220,6 +292,13 @@ func GetDislikedAreas(dbConn *sql.DB, userID string) ([]models.DislikedArea, err
 			}
 			area.Paths = paths
 		}
+		if polygonJSON != "" {
+			polygon, err := unmarshalPolygonGeometry(polygonJSON)
+			if err != nil {
+				return nil, fmt.Errorf("decode drawn disliked area: %w", err)
+			}
+			area.Polygon = polygon
+		}
 		areas = append(areas, area)
 	}
 	if err := rows.Err(); err != nil {
@@ -229,6 +308,11 @@ func GetDislikedAreas(dbConn *sql.DB, userID string) ([]models.DislikedArea, err
 }
 
 type multiLineStringGeoJSON struct {
+	Type        string        `json:"type"`
+	Coordinates [][][]float64 `json:"coordinates"`
+}
+
+type polygonGeoJSON struct {
 	Type        string        `json:"type"`
 	Coordinates [][][]float64 `json:"coordinates"`
 }
@@ -278,6 +362,53 @@ func unmarshalStreetGeometry(value string) ([][]models.Coordinates, error) {
 		}
 	}
 	return paths, nil
+}
+
+func marshalPolygonGeometry(polygon []models.Coordinates) ([]byte, error) {
+	if len(polygon) < 3 {
+		return nil, errors.New("polygon has fewer than three points")
+	}
+	ring := make([][]float64, 0, len(polygon)+1)
+	for _, point := range polygon {
+		ring = append(ring, []float64{point.Longitude, point.Latitude})
+	}
+	first := ring[0]
+	last := ring[len(ring)-1]
+	if first[0] != last[0] || first[1] != last[1] {
+		ring = append(ring, []float64{first[0], first[1]})
+	}
+	return json.Marshal(polygonGeoJSON{
+		Type:        "Polygon",
+		Coordinates: [][][]float64{ring},
+	})
+}
+
+func unmarshalPolygonGeometry(value string) ([]models.Coordinates, error) {
+	var geometry polygonGeoJSON
+	if err := json.Unmarshal([]byte(value), &geometry); err != nil {
+		return nil, err
+	}
+	if geometry.Type != "Polygon" || len(geometry.Coordinates) == 0 {
+		return nil, fmt.Errorf("unexpected geometry type %q", geometry.Type)
+	}
+	ring := geometry.Coordinates[0]
+	polygon := make([]models.Coordinates, 0, len(ring))
+	for _, point := range ring {
+		if len(point) < 2 {
+			continue
+		}
+		polygon = append(polygon, models.Coordinates{
+			Latitude:  point[1],
+			Longitude: point[0],
+		})
+	}
+	if len(polygon) > 1 && polygon[0] == polygon[len(polygon)-1] {
+		polygon = polygon[:len(polygon)-1]
+	}
+	if len(polygon) < 3 {
+		return nil, errors.New("polygon has fewer than three valid points")
+	}
+	return polygon, nil
 }
 
 func DeleteDislikedArea(dbConn *sql.DB, userID string, areaID string) (bool, error) {

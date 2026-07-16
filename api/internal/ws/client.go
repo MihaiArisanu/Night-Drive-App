@@ -16,11 +16,12 @@ const (
 )
 
 type Client struct {
-	Hub     *Hub
-	Conn    *websocket.Conn
-	Send    chan []byte
-	UserID  string
-	GroupID string
+	Hub       *Hub
+	Conn      *websocket.Conn
+	Send      chan []byte
+	UserID    string
+	SessionID string
+	GroupID   string
 }
 
 type SyncMessage struct {

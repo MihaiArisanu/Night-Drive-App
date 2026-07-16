@@ -1,10 +1,9 @@
 import { useEffect, useRef } from 'react';
-import { Alert } from 'react-native';
 import Toast from 'react-native-toast-message';
 import { API_BASE_URL } from '@env';
 import { useSettingsStore } from '../store/useSettingsStore';
-import { useNavigation } from '@react-navigation/native';
 import { apiFetch } from '../services/api';
+import { notifySessionInvalidated } from '../services/sessionEvents';
 
 interface InvitePayload {
     inviteId: string;
@@ -28,8 +27,6 @@ export function useWebSocket(
 ) {
     const ws = useRef<WebSocket | null>(null);
     const reconnectTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const navigation = useNavigation<any>();
-
     const inviteCallbackRef = useRef(onInviteReceived);
     useEffect(() => {
         inviteCallbackRef.current = onInviteReceived;
@@ -89,9 +86,9 @@ export function useWebSocket(
                             setGroupVersion,
                             setGroupDestination,
                             addGroupStop,
+                            removeGroupStop,
                             setGroupMembers,
                             clearGroupState,
-                            clearSettings,
                             addPendingGroupInvite,
                             removePendingGroupInvite,
                         } = useSettingsStore.getState();
@@ -161,16 +158,12 @@ export function useWebSocket(
                                     position: 'top',
                                 });
                             }
-                        } else if (message.type === 'KICK_DUPLICATE') {
-                            Alert.alert(
-                                "Session Terminated",
-                                "Your account was logged in from another device. This session will be closed.",
-                                [{
-                                    text: "OK", onPress: () => {
-                                        clearSettings();
-                                        navigation.replace('Welcome');
-                                    }
-                                }]
+                        } else if (
+                            message.type === 'session_invalidated'
+                            || message.type === 'KICK_DUPLICATE'
+                        ) {
+                            notifySessionInvalidated(
+                                message.message || 'Your account is now active on another device.',
                             );
                         } else if (message.type === 'GROUP_STOP_ADDED' || message.type === 'group_stop_added') {
                             const payload = message.payload;
@@ -221,6 +214,20 @@ export function useWebSocket(
                                     visibilityTime: 4000,
                                 });
                             }
+                        } else if (message.type === 'GROUP_STOP_CANCELLED') {
+                            const payload = message.payload;
+                            if (payload?.groupId === activeGroupId && payload?.stopId) {
+                                removeGroupStop(payload.stopId);
+                                if (typeof payload.version === 'number') {
+                                    setGroupVersion(payload.version);
+                                }
+                                Toast.show({
+                                    type: 'info',
+                                    text1: 'Group stop cancelled',
+                                    text2: 'The group owner removed this stop from the route.',
+                                    position: 'top',
+                                });
+                            }
                         }
                     } catch (error) {
                         console.error("[WebSocket] Eroare la parsarea mesajului:", error);
@@ -257,5 +264,5 @@ export function useWebSocket(
                 ws.current = null;
             }
         };
-    }, [token, groupId, navigation]);
+    }, [token, groupId]);
 }

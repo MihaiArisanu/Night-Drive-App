@@ -52,6 +52,11 @@ func CreateWebSocketTicketHandler(database *sql.DB, rdb *redis.Client) http.Hand
 			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
 			return
 		}
+		sessionID, ok := r.Context().Value(SessionIDKey).(string)
+		if !ok || sessionID == "" {
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
+			return
+		}
 		rateKey := "ws_ticket_rate:" + userID
 		count, err := rdb.Incr(r.Context(), rateKey).Result()
 		if err != nil {
@@ -94,7 +99,7 @@ func CreateWebSocketTicketHandler(database *sql.DB, rdb *redis.Client) http.Hand
 			}
 		}
 
-		ticket, err := db.CreateWebSocketTicket(r.Context(), rdb, userID, authorizedGroupID)
+		ticket, err := db.CreateWebSocketTicket(r.Context(), rdb, userID, sessionID, authorizedGroupID)
 		if err != nil {
 			RespondWithError(w, http.StatusServiceUnavailable, "ticket_unavailable", "Could not create WebSocket ticket", err)
 			return
@@ -133,6 +138,15 @@ func ServeWS(hub *ws.Hub, rdb *redis.Client, w http.ResponseWriter, r *http.Requ
 		RespondWithError(w, http.StatusUnauthorized, "account_deleted", "Account no longer exists", nil)
 		return
 	}
+	sessionValid, err := db.ValidateAuthSession(r.Context(), rdb, ticket.UserID, ticket.SessionID)
+	if err != nil {
+		RespondWithError(w, http.StatusServiceUnavailable, "auth_unavailable", "Authentication service unavailable", err)
+		return
+	}
+	if !sessionValid {
+		RespondWithError(w, http.StatusUnauthorized, "session_replaced", "This account is active on another device", nil)
+		return
+	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println("Upgrade error:", err)
@@ -140,11 +154,12 @@ func ServeWS(hub *ws.Hub, rdb *redis.Client, w http.ResponseWriter, r *http.Requ
 	}
 
 	client := &ws.Client{
-		Hub:     hub,
-		Conn:    conn,
-		Send:    make(chan []byte, 256),
-		UserID:  ticket.UserID,
-		GroupID: ticket.GroupID,
+		Hub:       hub,
+		Conn:      conn,
+		Send:      make(chan []byte, 256),
+		UserID:    ticket.UserID,
+		SessionID: ticket.SessionID,
+		GroupID:   ticket.GroupID,
 	}
 
 	client.Hub.Register <- client

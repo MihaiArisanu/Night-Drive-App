@@ -44,7 +44,8 @@ async def fetch_exclusion_zones(
             ST_X(location::geometry) AS longitude,
             avoidance_radius_meters,
             coverage_type,
-            COALESCE(ST_AsGeoJSON(street_geometry), '') AS geometry_json
+            COALESCE(ST_AsGeoJSON(street_geometry), '') AS geometry_json,
+            COALESCE(ST_AsGeoJSON(drawn_geometry), '') AS polygon_json
         FROM disliked_areas
         WHERE user_id = $1
           AND (
@@ -57,6 +58,14 @@ async def fetch_exclusion_zones(
                   street_geometry IS NOT NULL
                   AND ST_DWithin(
                       street_geometry,
+                      ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography,
+                      $4
+                  )
+              )
+              OR (
+                  drawn_geometry IS NOT NULL
+                  AND ST_DWithin(
+                      drawn_geometry,
                       ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography,
                       $4
                   )
@@ -101,7 +110,9 @@ async def fetch_exclusion_zones(
     for record in disliked_records:
         values = dict(record)
         geometry_json = values.pop("geometry_json", "")
+        polygon_json = values.pop("polygon_json", "")
         paths = []
+        polygon = []
         if geometry_json:
             geometry = json.loads(geometry_json)
             if geometry.get("type") == "MultiLineString":
@@ -110,7 +121,19 @@ async def fetch_exclusion_zones(
                     for line in geometry.get("coordinates", [])
                     if len(line) >= 2
                 ]
-        zones.append(ExclusionZone(**values, paths=paths))
+        if polygon_json:
+            geometry = json.loads(polygon_json)
+            if geometry.get("type") == "Polygon":
+                rings = geometry.get("coordinates", [])
+                if rings:
+                    polygon = [
+                        (float(point[1]), float(point[0]))
+                        for point in rings[0]
+                        if len(point) >= 2
+                    ]
+                    if len(polygon) > 1 and polygon[0] == polygon[-1]:
+                        polygon.pop()
+        zones.append(ExclusionZone(**values, paths=paths, polygon=polygon))
 
     zones.extend(ExclusionZone(**dict(record)) for record in event_records)
     return zones

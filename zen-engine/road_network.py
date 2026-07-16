@@ -16,6 +16,7 @@ class AvoidanceGeometry:
     center: Coordinate
     radius_meters: float
     paths: Tuple[Tuple[Coordinate, ...], ...] = ()
+    polygon: Tuple[Coordinate, ...] = ()
 
 # Lower values make the planner prefer higher-capacity roads while still
 # allowing links and tertiary roads when they are needed for connectivity.
@@ -144,6 +145,7 @@ class RoadPathPlanner:
             if zone.radius_meters > 0.0
             and (
                 bool(zone.paths)
+                or bool(zone.polygon)
                 or haversine_meters(origin, zone.center) > zone.radius_meters
             )
         ]
@@ -422,6 +424,13 @@ def distance_point_to_path_meters(
 
 
 def point_is_blocked(point: Coordinate, zone: AvoidanceGeometry) -> bool:
+    if zone.polygon:
+        if point_in_polygon(point, zone.polygon):
+            return True
+        return distance_point_to_closed_path_meters(
+            point,
+            zone.polygon,
+        ) <= zone.radius_meters
     if zone.paths:
         return distance_point_to_path_meters(point, zone.paths) <= zone.radius_meters
     return haversine_meters(point, zone.center) <= zone.radius_meters
@@ -432,6 +441,25 @@ def segment_is_blocked(
     end: Coordinate,
     zone: AvoidanceGeometry,
 ) -> bool:
+    if zone.polygon:
+        if point_is_blocked(start, zone) or point_is_blocked(end, zone):
+            return True
+        for polygon_start, polygon_end in zip(
+            zone.polygon,
+            zone.polygon[1:] + zone.polygon[:1],
+        ):
+            if (
+                distance_segment_to_segment_meters(
+                    start,
+                    end,
+                    polygon_start,
+                    polygon_end,
+                )
+                <= zone.radius_meters
+            ):
+                return True
+        return False
+
     if not zone.paths:
         return (
             distance_point_to_segment_meters(zone.center, start, end)
@@ -460,6 +488,46 @@ def segment_is_blocked(
             ):
                 return True
     return False
+
+
+def distance_point_to_closed_path_meters(
+    point: Coordinate,
+    polygon: Tuple[Coordinate, ...],
+) -> float:
+    if len(polygon) < 2:
+        return float("inf")
+    return min(
+        distance_point_to_segment_meters(point, start, end)
+        for start, end in zip(polygon, polygon[1:] + polygon[:1])
+    )
+
+
+def point_in_polygon(
+    point: Coordinate,
+    polygon: Tuple[Coordinate, ...],
+) -> bool:
+    if len(polygon) < 3:
+        return False
+    latitude, longitude = point
+    inside = False
+    previous = len(polygon) - 1
+    for current, (current_latitude, current_longitude) in enumerate(polygon):
+        previous_latitude, previous_longitude = polygon[previous]
+        crosses_latitude = (
+            (current_latitude > latitude)
+            != (previous_latitude > latitude)
+        )
+        if crosses_latitude:
+            longitude_at_latitude = (
+                (previous_longitude - current_longitude)
+                * (latitude - current_latitude)
+                / (previous_latitude - current_latitude)
+                + current_longitude
+            )
+            if longitude < longitude_at_latitude:
+                inside = not inside
+        previous = current
+    return inside
 
 
 def parallel_angle_difference(first: float, second: float) -> float:

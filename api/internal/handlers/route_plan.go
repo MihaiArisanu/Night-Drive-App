@@ -84,6 +84,9 @@ func PlanRouteHandler(database *sql.DB, planner routing.Planner) http.HandlerFun
 					zone.Paths = append(zone.Paths, routePath)
 				}
 			}
+			for _, point := range area.Polygon {
+				zone.Polygon = append(zone.Polygon, toRoutingCoordinate(point))
+			}
 			zones = append(zones, zone)
 		}
 
@@ -119,6 +122,7 @@ func PlanRouteHandler(database *sql.DB, planner routing.Planner) http.HandlerFun
 			"duration":        float64(result.DurationSeconds) / 60,
 			"used_detour":     result.UsedDetour,
 			"avoidance_zones": len(zones),
+			"steps":           result.Steps,
 		})
 	}
 }

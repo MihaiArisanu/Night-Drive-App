@@ -18,6 +18,7 @@ import (
 type contextKey string
 
 const UserIDKey contextKey = "userID"
+const SessionIDKey contextKey = "sessionID"
 
 func RequireAuth(rdb *redis.Client, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -70,7 +71,25 @@ func RequireAuth(rdb *redis.Client, next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		sessionID, _ := claims["sid"].(string)
+		var sessionValid bool
+		if sessionID == "" {
+			sessionID = db.LegacySessionID(tokenString)
+			sessionValid, err = db.AdoptLegacyAuthSession(r.Context(), rdb, userID, sessionID)
+		} else {
+			sessionValid, err = db.ValidateAuthSession(r.Context(), rdb, userID, sessionID)
+		}
+		if err != nil {
+			RespondWithError(w, http.StatusServiceUnavailable, "auth_unavailable", "Authentication service unavailable", err)
+			return
+		}
+		if !sessionValid {
+			RespondWithError(w, http.StatusUnauthorized, "session_replaced", "This account is active on another device", nil)
+			return
+		}
+
 		ctx := context.WithValue(r.Context(), UserIDKey, userID)
+		ctx = context.WithValue(ctx, SessionIDKey, sessionID)
 
 		next.ServeHTTP(w, r.WithContext(ctx))
 	}
@@ -86,7 +105,7 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 
 		duration := time.Since(start)
 		log.Printf("[%s] %s %s - %d %s - %v",
-			r.RemoteAddr,
+			requestClientIP(r),
 			r.Method,
 			r.URL.EscapedPath(),
 			lrw.statusCode,
@@ -94,6 +113,30 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 			duration,
 		)
 	})
+}
+
+func requestClientIP(r *http.Request) string {
+	if strings.EqualFold(os.Getenv("TRUST_PROXY_HEADERS"), "true") {
+		forwardedFor := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
+		if len(forwardedFor) > 0 {
+			forwardedIP := strings.TrimSpace(forwardedFor[0])
+			if net.ParseIP(forwardedIP) != nil {
+				return forwardedIP
+			}
+		}
+
+		realIP := strings.TrimSpace(r.Header.Get("X-Real-IP"))
+		if net.ParseIP(realIP) != nil {
+			return realIP
+		}
+	}
+
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		return host
+	}
+
+	return r.RemoteAddr
 }
 
 type loggingResponseWriter struct {
@@ -134,7 +177,7 @@ func CORSMiddleware(next http.Handler) http.Handler {
 		} else if origin != "" && allowedOrigins == "" {
 		}
 
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, Authorization, X-CSRF-Token")
 
 		if r.Method == http.MethodOptions {
@@ -149,11 +192,7 @@ func CORSMiddleware(next http.Handler) http.Handler {
 func RateLimit(rdb *redis.Client, limit int, window time.Duration) func(http.HandlerFunc) http.HandlerFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			ip, _, err := net.SplitHostPort(r.RemoteAddr)
-			if err != nil {
-				ip = r.RemoteAddr
-			}
-
+			ip := requestClientIP(r)
 			key := "rate_limit:" + r.URL.Path + ":" + ip
 			ctx := context.Background()
 

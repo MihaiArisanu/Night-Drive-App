@@ -23,6 +23,13 @@ type GroupStopUpdate struct {
 	AppliesToCurrentUser bool      `json:"appliesToCurrentUser"`
 }
 
+type GroupStopCancellation struct {
+	GroupID         string `json:"groupId"`
+	StopID          string `json:"stopId"`
+	CancelledForAll bool   `json:"cancelledForAll"`
+	Version         int64  `json:"version"`
+}
+
 type InviteRequest struct {
 	TargetUserId string  `json:"targetUserId"`
 	SenderName   string  `json:"senderName"`

@@ -2,6 +2,7 @@ package models
 
 type DislikeRequest struct {
 	Coordinates
-	Reason       string `json:"reason"`
-	CoverageType string `json:"coverage_type,omitempty"`
+	Reason       string        `json:"reason"`
+	CoverageType string        `json:"coverage_type,omitempty"`
+	Polygon      []Coordinates `json:"polygon,omitempty"`
 }
