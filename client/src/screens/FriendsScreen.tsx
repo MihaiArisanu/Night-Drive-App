@@ -15,6 +15,7 @@ import { GroupMember } from '../store/useSettingsStore';
 export default function FriendsScreen({ navigation, route }: any) {
     const [activeTab, setActiveTab] = useState(route?.params?.initialTab || 'Friends');
     const [sentFriendRequests, setSentFriendRequests] = useState<Set<string>>(new Set());
+    const [removingFriendId, setRemovingFriendId] = useState<string | null>(null);
 
     const [searchTag, setSearchTag] = useState('');
     const [feedback, setFeedback] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
@@ -31,7 +32,7 @@ export default function FriendsScreen({ navigation, route }: any) {
     const { groupDetails, isLoading: isGroupLoading, refreshGroupDetails } = useGroupDetails();
 
     const { coords } = useLocation();
-    const { friends, refetchFriends } = useAllFriends();
+    const { friends, refetchFriends, removeFriend } = useAllFriends();
 
     useEffect(() => {
         const requestedTab = route?.params?.initialTab;
@@ -154,8 +155,31 @@ export default function FriendsScreen({ navigation, route }: any) {
         }
     };
 
-    const handleRemoveFriend = () => {
-        Alert.alert("Notice", "Unfriending API is not implemented on the backend yet.");
+    const handleRemoveFriend = (friendId: string, friendName: string) => {
+        if (removingFriendId) return;
+
+        Alert.alert(
+            'Remove friend?',
+            `${friendName} will no longer see your live location and will be removed from your friends list.`,
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Remove',
+                    style: 'destructive',
+                    onPress: async () => {
+                        setRemovingFriendId(friendId);
+                        try {
+                            await removeFriend(friendId);
+                        } catch (error) {
+                            const message = error instanceof Error ? error.message : 'Please try again.';
+                            Alert.alert('Could not remove friend', message);
+                        } finally {
+                            setRemovingFriendId(null);
+                        }
+                    },
+                },
+            ],
+        );
     };
 
     const renderFriendsTab = () => (
@@ -252,8 +276,14 @@ export default function FriendsScreen({ navigation, route }: any) {
                             </TouchableOpacity>
                                 );
                             })()}
-                            <TouchableOpacity style={styles.dangerButton} onPress={handleRemoveFriend}>
-                                <Text style={styles.dangerButtonText}>X</Text>
+                            <TouchableOpacity
+                                style={[styles.dangerButton, removingFriendId === item.id && styles.disabledButton]}
+                                onPress={() => handleRemoveFriend(item.id, item.username)}
+                                disabled={removingFriendId !== null}
+                            >
+                                {removingFriendId === item.id
+                                    ? <ActivityIndicator color="#EF4444" size="small" />
+                                    : <Text style={styles.dangerButtonText}>X</Text>}
                             </TouchableOpacity>
                         </View>
                     </View>

@@ -2,6 +2,7 @@ import { useCallback, useEffect } from 'react';
 import { apiFetch } from '../services/api';
 import { GroupInvite, useSettingsStore } from '../store/useSettingsStore';
 import { applyGroupSnapshot, GroupSnapshot } from '../services/groupSession';
+import { notifySocialNotificationsChanged } from '../services/socialNotificationEvents';
 
 interface GroupInviteResponse extends GroupInvite {
     senderId: string;
@@ -34,6 +35,7 @@ export function useGroupInvites() {
                 applyGroupSnapshot(snapshot);
             }
             removePendingGroupInvite(invite.id);
+            notifySocialNotificationsChanged();
             return true;
         } catch (error) {
             console.error('Failed to accept group invite:', error);
@@ -45,6 +47,7 @@ export function useGroupInvites() {
         try {
             await apiFetch(`/group-invites/${invite.id}`, { method: 'DELETE' });
             removePendingGroupInvite(invite.id);
+            notifySocialNotificationsChanged();
             return true;
         } catch (error) {
             console.error('Failed to decline group invite:', error);

@@ -23,6 +23,7 @@ import (
 
 	"github.com/MihaiArisanu/nightdrive-backend/internal/db"
 	"github.com/MihaiArisanu/nightdrive-backend/internal/models"
+	"github.com/MihaiArisanu/nightdrive-backend/internal/spontaneous"
 	"github.com/MihaiArisanu/nightdrive-backend/internal/utils"
 	"github.com/MihaiArisanu/nightdrive-backend/internal/ws"
 )
@@ -565,7 +566,7 @@ func deleteUserAccount(
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func UpdateUserLocationHandler(rdb *redis.Client) http.HandlerFunc {
+func UpdateUserLocationHandler(rdb *redis.Client, spontaneousRides *spontaneous.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
@@ -579,11 +580,13 @@ func UpdateUserLocationHandler(rdb *redis.Client) http.HandlerFunc {
 		}
 
 		var payload struct {
-			Latitude  float64 `json:"latitude"`
-			Longitude float64 `json:"longitude"`
-			Heading   float64 `json:"heading"`
-			Speed     float64 `json:"speed"`
-			IsDnd     bool    `json:"isDnd"`
+			Latitude   float64                `json:"latitude"`
+			Longitude  float64                `json:"longitude"`
+			Heading    float64                `json:"heading"`
+			Speed      float64                `json:"speed"`
+			Accuracy   float64                `json:"accuracy"`
+			IsDnd      bool                   `json:"isDnd"`
+			Navigation *models.LiveNavigation `json:"navigation,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid request body", nil)
@@ -594,20 +597,43 @@ func UpdateUserLocationHandler(rdb *redis.Client) http.HandlerFunc {
 			RespondWithError(w, http.StatusBadRequest, "invalid_coordinates", "Invalid latitude or longitude", nil)
 			return
 		}
+		if payload.Accuracy < 0 || math.IsNaN(payload.Accuracy) || math.IsInf(payload.Accuracy, 0) {
+			RespondWithError(w, http.StatusBadRequest, "invalid_accuracy", "Invalid location accuracy", nil)
+			return
+		}
+		if payload.Navigation != nil {
+			if payload.Navigation.Mode != "none" && payload.Navigation.Mode != "destination" && payload.Navigation.Mode != "zen" {
+				RespondWithError(w, http.StatusBadRequest, "invalid_navigation", "Invalid navigation state", nil)
+				return
+			}
+			if payload.Navigation.Mode == "destination" {
+				if payload.Navigation.Destination == nil || !validCoordinates(*payload.Navigation.Destination) {
+					RespondWithError(w, http.StatusBadRequest, "invalid_navigation", "Destination coordinates are required", nil)
+					return
+				}
+			} else {
+				payload.Navigation.Destination = nil
+			}
+		}
 
 		location := models.LiveLocation{
 			Coordinates: models.Coordinates{
 				Latitude:  payload.Latitude,
 				Longitude: payload.Longitude,
 			},
-			Heading:   payload.Heading,
-			Speed:     payload.Speed,
-			IsDND:     payload.IsDnd,
-			Timestamp: time.Now().Unix(),
+			Heading:    payload.Heading,
+			Speed:      payload.Speed,
+			Accuracy:   payload.Accuracy,
+			IsDND:      payload.IsDnd,
+			Navigation: payload.Navigation,
+			Timestamp:  time.Now().Unix(),
 		}
 		if err := db.SaveLiveLocation(r.Context(), rdb, userID, location); err != nil {
 			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to update live location", nil)
 			return
+		}
+		if spontaneousRides != nil {
+			go spontaneousRides.HandleLocationUpdate(userID, location)
 		}
 
 		w.WriteHeader(http.StatusNoContent)

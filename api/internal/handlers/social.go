@@ -4,14 +4,17 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 
 	"github.com/MihaiArisanu/nightdrive-backend/internal/db"
 	"github.com/MihaiArisanu/nightdrive-backend/internal/models"
+	"github.com/MihaiArisanu/nightdrive-backend/internal/push"
+	"github.com/google/uuid"
 )
 
-func SendFriendRequestHandler(database *sql.DB) http.HandlerFunc {
+func SendFriendRequestHandler(database *sql.DB, pushSender push.Sender) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
@@ -56,6 +59,22 @@ func SendFriendRequestHandler(database *sql.DB) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
+		if result.Status == "created" {
+			sender, senderErr := db.GetUserByID(database, userID)
+			if senderErr != nil {
+				log.Printf("[WARN] Friend request saved but sender profile could not be loaded for push: %v", senderErr)
+			} else {
+				sendPushAsync(pushSender, result.Recipient.ID, push.Notification{
+					Title: "New friend request",
+					Body:  sender.Username + " wants to be your friend.",
+					Type:  "FRIEND_REQUEST",
+					Data: map[string]string{
+						"senderId":   sender.ID,
+						"senderName": sender.Username,
+					},
+				})
+			}
+		}
 		statusCode := http.StatusCreated
 		if result.Status == "friendship_repaired" {
 			statusCode = http.StatusOK
@@ -173,5 +192,36 @@ func GetAllFriendsHandler(database *sql.DB) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(friends)
+	}
+}
+
+func RemoveFriendHandler(database *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
+			return
+		}
+
+		userID, ok := r.Context().Value(UserIDKey).(string)
+		if !ok || userID == "" {
+			RespondWithError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", nil)
+			return
+		}
+		friendID := r.PathValue("id")
+		if _, err := uuid.Parse(friendID); err != nil || friendID == userID {
+			RespondWithError(w, http.StatusBadRequest, "invalid_friend_id", "Invalid friend ID", nil)
+			return
+		}
+
+		if err := db.RemoveFriend(r.Context(), database, userID, friendID); err != nil {
+			if errors.Is(err, db.ErrFriendshipNotFound) {
+				RespondWithError(w, http.StatusNotFound, "friendship_not_found", "Friendship not found", nil)
+				return
+			}
+			RespondWithError(w, http.StatusInternalServerError, "api_error", "Failed to remove friend", err)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
 	}
 }

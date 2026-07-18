@@ -35,8 +35,10 @@ type NearbyUser struct {
 
 type LiveLocation struct {
 	Coordinates
-	Heading   float64 `json:"heading"`
-	Speed     float64 `json:"speed"`
-	IsDND     bool    `json:"isDnd"`
-	Timestamp int64   `json:"timestamp"`
+	Heading    float64         `json:"heading"`
+	Speed      float64         `json:"speed"`
+	Accuracy   float64         `json:"accuracy"`
+	IsDND      bool            `json:"isDnd"`
+	Navigation *LiveNavigation `json:"navigation,omitempty"`
+	Timestamp  int64           `json:"timestamp"`
 }

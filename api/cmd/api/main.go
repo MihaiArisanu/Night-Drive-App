@@ -14,9 +14,12 @@ import (
 
 	"github.com/MihaiArisanu/nightdrive-backend/internal/db"
 	"github.com/MihaiArisanu/nightdrive-backend/internal/handlers"
+	"github.com/MihaiArisanu/nightdrive-backend/internal/push"
 	"github.com/MihaiArisanu/nightdrive-backend/internal/routing"
+	"github.com/MihaiArisanu/nightdrive-backend/internal/spontaneous"
 	"github.com/MihaiArisanu/nightdrive-backend/internal/streets"
 	"github.com/MihaiArisanu/nightdrive-backend/internal/ws"
+	zenservice "github.com/MihaiArisanu/nightdrive-backend/internal/zen"
 )
 
 func main() {
@@ -31,6 +34,24 @@ func main() {
 		log.Println("Closing database connection...")
 		database.Close()
 	}()
+
+	var pushSender push.Sender = push.DisabledSender{}
+	firebaseSender, err := push.NewFirebaseSender(
+		ctx,
+		os.Getenv("FIREBASE_PROJECT_ID"),
+		func(ctx context.Context, userID string) (string, error) {
+			return db.GetFCMToken(ctx, database, userID)
+		},
+		func(ctx context.Context, userID, token string) error {
+			return db.ClearFCMTokenIfMatches(ctx, database, userID, token)
+		},
+	)
+	if err != nil {
+		log.Printf("[WARN] Firebase push notifications disabled: %v", err)
+	} else {
+		pushSender = firebaseSender
+		log.Println("Firebase push notifications initialized.")
+	}
 
 	if err := handlers.InitJWTSecret(); err != nil {
 		log.Fatalf("Failed to initialize JWT secret: %v", err)
@@ -64,6 +85,20 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize route planner: %v", err)
 	}
+	zenPlanner := zenservice.NewHTTPPlanner(
+		os.Getenv("ZEN_ENGINE_URL"),
+		os.Getenv("INTERNAL_SECRET"),
+		nil,
+	)
+	spontaneousRides := spontaneous.NewService(
+		database,
+		rdb,
+		routePlanner,
+		hub,
+		pushSender,
+		spontaneous.ConfigFromEnvironment(),
+	)
+	log.Printf("Initialized %s", spontaneousRides)
 	streetResolver := streets.NewOverpassResolver(os.Getenv("OVERPASS_URLS"), nil)
 
 	mux := http.NewServeMux()
@@ -114,15 +149,17 @@ func main() {
 	mux.HandleFunc("/api/v1/users/password", requireAuth(handlers.ChangePasswordHandler(database)))
 	mux.HandleFunc("/api/v1/users/feedback", requireAuth(handlers.SubmitFeedbackHandler(database)))
 
-	mux.HandleFunc("/api/v1/users/location", requireAuth(handlers.UpdateUserLocationHandler(rdb)))
+	mux.HandleFunc("/api/v1/users/location", requireAuth(handlers.UpdateUserLocationHandler(rdb, spontaneousRides)))
 	mux.HandleFunc("/api/v1/events", requireAuth(handlers.CreateEventHandler(database, hub)))
 
 	mux.HandleFunc("/api/v1/events/vote", requireAuth(handlers.VoteEventHandler(database)))
 	mux.HandleFunc("/api/v1/friends", requireAuth(handlers.GetAllFriendsHandler(database)))
+	mux.HandleFunc("/api/v1/friends/{id}", requireAuth(handlers.RemoveFriendHandler(database)))
 	mux.HandleFunc("/api/v1/friends/nearby", requireAuth(handlers.GetNearbyFriendsHandler(database, rdb)))
-	mux.HandleFunc("/api/v1/friends/request", requireAuth(handlers.SendFriendRequestHandler(database)))
+	mux.HandleFunc("/api/v1/friends/request", requireAuth(handlers.SendFriendRequestHandler(database, pushSender)))
 	mux.HandleFunc("/api/v1/friends/requests", requireAuth(handlers.GetFriendRequestsHandler(database)))
 	mux.HandleFunc("/api/v1/friends/requests/{id}/respond", requireAuth(handlers.RespondFriendRequestHandler(database)))
+	mux.HandleFunc("/api/v1/notifications/count", requireAuth(handlers.GetSocialNotificationCountHandler(database)))
 
 	mux.HandleFunc("/api/v1/users/places", requireAuth(handlers.PlacesHandler(database)))
 	mux.HandleFunc("/api/v1/users/places/{id}", requireAuth(handlers.PlaceByIDHandler(database)))
@@ -131,9 +168,9 @@ func main() {
 
 	mux.HandleFunc("/api/v1/locations/history", requireAuth(handlers.LocationHistoryHandler(database)))
 
-	mux.HandleFunc("/api/v1/routes/zen/start", requireAuth(handlers.StartZenModeHandler(rdb)))
+	mux.HandleFunc("/api/v1/routes/zen/start", requireAuth(handlers.StartZenModeHandler(rdb, zenPlanner)))
 	mux.HandleFunc("/api/v1/routes/zen/stop", requireAuth(handlers.StopZenModeHandler(rdb)))
-	mux.HandleFunc("/api/v1/routes/zen/sync", requireAuth(handlers.SyncZenLocationHandler(rdb)))
+	mux.HandleFunc("/api/v1/routes/zen/sync", requireAuth(handlers.SyncZenLocationHandler(rdb, zenPlanner)))
 	mux.HandleFunc("/api/v1/routes/active", requireAuth(handlers.SaveActiveRouteHandler(rdb)))
 	mux.HandleFunc("/api/v1/routes/plan", requireAuth(handlers.PlanRouteHandler(database, routePlanner)))
 
@@ -144,7 +181,7 @@ func main() {
 	mux.HandleFunc("/api/v1/groups/{id}/stops/{stopId}", requireAuth(handlers.CancelGroupStopHandler(database, hub)))
 	mux.HandleFunc("/api/v1/groups/{id}/destination", requireAuth(handlers.UpdateGroupDestinationHandler(database, hub)))
 	mux.HandleFunc("/api/v1/groups/{id}/close", requireAuth(handlers.CloseGroupHandler(database, hub)))
-	mux.HandleFunc("/api/v1/groups/invite", requireAuth(handlers.InviteGroupHandler(database, hub)))
+	mux.HandleFunc("/api/v1/groups/invite", requireAuth(handlers.InviteGroupHandler(database, hub, pushSender)))
 	mux.HandleFunc("/api/v1/groups/me/current", requireAuth(handlers.GetCurrentGroupHandler(database)))
 	mux.HandleFunc("/api/v1/group-invites", requireAuth(handlers.GetGroupInvitesHandler(database)))
 	mux.HandleFunc("/api/v1/group-invites/{id}", requireAuth(handlers.DeleteGroupInviteHandler(database)))
@@ -152,6 +189,7 @@ func main() {
 	mux.HandleFunc("/api/v1/groups/{id}/members/me", requireAuth(handlers.LeaveGroupHandler(database, hub)))
 	mux.HandleFunc("/api/v1/groups/{id}/voice-token", requireAuth(handlers.GroupVoiceTokenHandler(database)))
 	mux.HandleFunc("/api/v1/groups/{id}", requireAuth(handlers.GetGroupDetailsHandler(database)))
+	mux.HandleFunc("/api/v1/spontaneous-rides/{id}/respond", requireAuth(handlers.RespondSpontaneousRideHandler(database, spontaneousRides)))
 
 	mux.HandleFunc("/api/v1/ws", func(w http.ResponseWriter, r *http.Request) {
 		handlers.ServeWS(hub, rdb, w, r)

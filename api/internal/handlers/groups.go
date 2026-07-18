@@ -15,6 +15,7 @@ import (
 
 	"github.com/MihaiArisanu/nightdrive-backend/internal/db"
 	"github.com/MihaiArisanu/nightdrive-backend/internal/models"
+	"github.com/MihaiArisanu/nightdrive-backend/internal/push"
 	"github.com/MihaiArisanu/nightdrive-backend/internal/routing"
 	"github.com/MihaiArisanu/nightdrive-backend/internal/ws"
 	"github.com/google/uuid"
@@ -310,7 +311,7 @@ func CancelGroupStopHandler(database *sql.DB, hub *ws.Hub) http.HandlerFunc {
 	}
 }
 
-func InviteGroupHandler(database *sql.DB, hub *ws.Hub) http.HandlerFunc {
+func InviteGroupHandler(database *sql.DB, hub *ws.Hub, pushSender push.Sender) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			RespondWithError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", nil)
@@ -381,7 +382,7 @@ func InviteGroupHandler(database *sql.DB, hub *ws.Hub) http.HandlerFunc {
 		}
 
 		wsMessage := map[string]interface{}{
-			"type": "RIDE_INVITE",
+			"type": "GROUP_INVITE",
 			"payload": map[string]interface{}{
 				"inviteId":   invite.ID,
 				"senderId":   invite.SenderID,
@@ -401,6 +402,17 @@ func InviteGroupHandler(database *sql.DB, hub *ws.Hub) http.HandlerFunc {
 		} else {
 			log.Printf("Failed to marshal invite WS message: %v", err)
 		}
+		sendPushAsync(pushSender, req.TargetUserId, push.Notification{
+			Title: "Ride group invitation",
+			Body:  invite.SenderName + " invited you to a ride group.",
+			Type:  "GROUP_INVITE",
+			Data: map[string]string{
+				"inviteId":   invite.ID,
+				"groupId":    invite.GroupID,
+				"senderId":   invite.SenderID,
+				"senderName": invite.SenderName,
+			},
+		})
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)

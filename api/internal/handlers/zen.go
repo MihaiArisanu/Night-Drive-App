@@ -1,17 +1,15 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"net/http"
-	"os"
 	"time"
 
+	zenservice "github.com/MihaiArisanu/nightdrive-backend/internal/zen"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -23,31 +21,7 @@ type ZenStartRequest struct {
 	ExpectedWaypointLng *float64 `json:"expected_waypoint_lng,omitempty"`
 }
 
-type ZenEngineRequest struct {
-	UserID     string  `json:"user_id"`
-	CurrentLat float64 `json:"current_lat"`
-	CurrentLng float64 `json:"current_lng"`
-	Heading    float64 `json:"heading"`
-}
-
-type ZenWaypoint struct {
-	Lat float64 `json:"lat"`
-	Lng float64 `json:"lng"`
-}
-
-type ZenEngineResponse struct {
-	Waypoints   []ZenWaypoint `json:"waypoints"`
-	IsColdStart bool          `json:"is_cold_start"`
-}
-
-type ZenEngineError struct {
-	StatusCode int
-	Code       string
-}
-
-func (e *ZenEngineError) Error() string {
-	return fmt.Sprintf("zen engine error %d: %s", e.StatusCode, e.Code)
-}
+type ZenWaypoint = zenservice.Waypoint
 
 type ZenSession struct {
 	Waypoints      []ZenWaypoint `json:"waypoints"`
@@ -65,61 +39,8 @@ func haversine(lat1, lon1, lat2, lon2 float64) float64 {
 	return R * c
 }
 
-func fetchZenWaypoints(ctx context.Context, userID string, lat, lng, heading float64) (*ZenEngineResponse, error) {
-	reqBody := ZenEngineRequest{
-		UserID:     userID,
-		CurrentLat: lat,
-		CurrentLng: lng,
-		Heading:    heading,
-	}
-	jsonData, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("encode zen request: %w", err)
-	}
-
-	engineURL := os.Getenv("ZEN_ENGINE_URL")
-	if engineURL == "" {
-		engineURL = "http://zen-engine:8000"
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, engineURL+"/generate-loop", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Internal-Secret", os.Getenv("INTERNAL_SECRET"))
-
-	client := &http.Client{Timeout: 25 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var engineErrorResponse struct {
-			Detail struct {
-				Code string `json:"code"`
-			} `json:"detail"`
-		}
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
-		_ = json.Unmarshal(body, &engineErrorResponse)
-		return nil, &ZenEngineError{
-			StatusCode: resp.StatusCode,
-			Code:       engineErrorResponse.Detail.Code,
-		}
-	}
-
-	var engineResp ZenEngineResponse
-	if err := json.NewDecoder(resp.Body).Decode(&engineResp); err != nil {
-		return nil, err
-	}
-	return &engineResp, nil
-}
-
 func respondZenRouteError(w http.ResponseWriter, err error, extension bool) {
-	var engineError *ZenEngineError
+	var engineError *zenservice.EngineError
 	if errors.As(err, &engineError) {
 		switch engineError.Code {
 		case "road_data_unavailable":
@@ -168,7 +89,7 @@ func decodeZenStartRequest(r *http.Request) (ZenStartRequest, error) {
 	return req, nil
 }
 
-func StartZenModeHandler(rdb *redis.Client) http.HandlerFunc {
+func StartZenModeHandler(rdb *redis.Client, planner zenservice.Planner) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, ok := r.Context().Value(UserIDKey).(string)
 		if !ok {
@@ -182,7 +103,7 @@ func StartZenModeHandler(rdb *redis.Client) http.HandlerFunc {
 			return
 		}
 
-		engineResp, err := fetchZenWaypoints(r.Context(), userID, req.Latitude, req.Longitude, req.Heading)
+		engineResp, err := planner.Generate(r.Context(), userID, req.Latitude, req.Longitude, req.Heading)
 		if err != nil {
 			respondZenRouteError(w, err, false)
 			return
@@ -229,7 +150,7 @@ func StopZenModeHandler(rdb *redis.Client) http.HandlerFunc {
 	}
 }
 
-func SyncZenLocationHandler(rdb *redis.Client) http.HandlerFunc {
+func SyncZenLocationHandler(rdb *redis.Client, planner zenservice.Planner) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, ok := r.Context().Value(UserIDKey).(string)
 		if !ok {
@@ -290,7 +211,7 @@ func SyncZenLocationHandler(rdb *redis.Client) http.HandlerFunc {
 
 			if nextIdx >= len(session.Waypoints) {
 				lastWp := session.Waypoints[len(session.Waypoints)-1]
-				engineResp, err := fetchZenWaypoints(ctx, userID, lastWp.Lat, lastWp.Lng, req.Heading)
+				engineResp, err := planner.Generate(ctx, userID, lastWp.Lat, lastWp.Lng, req.Heading)
 				if err != nil || len(engineResp.Waypoints) < 1 {
 					respondZenRouteError(w, err, true)
 					return

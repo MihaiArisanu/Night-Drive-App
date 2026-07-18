@@ -1,5 +1,6 @@
-import React, { useRef, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Animated, PanResponder, Dimensions } from 'react-native';
+import React, { useEffect, useMemo, useRef } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Animated, PanResponder, Dimensions, NativeModules, Pressable, Vibration } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { User, MapPin, X } from 'lucide-react-native';
 
 const { width } = Dimensions.get('window');
@@ -9,14 +10,30 @@ interface RideInviteSheetProps {
     friendName: string;
     distance: string;
     eta: string;
+    expiresAt: string;
     onAccept: () => void;
     onDecline: () => void;
 }
 
-export function RideInviteSheet({ isVisible, friendName, distance, eta, onAccept, onDecline }: RideInviteSheetProps) {
+export function RideInviteSheet({ isVisible, friendName, distance, eta, expiresAt, onAccept, onDecline }: RideInviteSheetProps) {
+    const insets = useSafeAreaInsets();
     const pan = useRef(new Animated.ValueXY()).current;
+    const acceptRef = useRef(onAccept);
+    const declineRef = useRef(onDecline);
     const sliderWidth = width - 50;
     const thumbWidth = 60;
+    const contentStyle = useMemo(
+        () => [
+            styles.content,
+            { paddingBottom: Math.max(insets.bottom, 24) + 40 },
+        ],
+        [insets.bottom],
+    );
+
+    useEffect(() => {
+        acceptRef.current = onAccept;
+        declineRef.current = onDecline;
+    }, [onAccept, onDecline]);
 
     const panResponder = useRef(
         PanResponder.create({
@@ -31,7 +48,7 @@ export function RideInviteSheet({ isVisible, friendName, distance, eta, onAccept
                     Animated.spring(pan, {
                         toValue: { x: sliderWidth - thumbWidth, y: 0 },
                         useNativeDriver: false,
-                    }).start(() => onAccept());
+                    }).start(() => acceptRef.current());
                 } else {
                     Animated.spring(pan, {
                         toValue: { x: 0, y: 0 },
@@ -45,20 +62,24 @@ export function RideInviteSheet({ isVisible, friendName, distance, eta, onAccept
     useEffect(() => {
         if (isVisible) {
             pan.setValue({ x: 0, y: 0 });
+            NativeModules.RideAlert?.play?.();
+            Vibration.vibrate([0, 80, 70, 80]);
+            const remainingTime = Math.max(0, Date.parse(expiresAt) - Date.now());
             const timer = setTimeout(() => {
-                onDecline();
-            }, 10000);
+                declineRef.current();
+            }, remainingTime);
             return () => clearTimeout(timer);
         } else {
             pan.setValue({ x: 0, y: 0 });
         }
-    }, [isVisible, onDecline, pan]);
+    }, [expiresAt, isVisible, pan]);
 
     if (!isVisible) return null;
 
     return (
-        <View style={styles.sheetContainer}>
-            <View style={styles.content}>
+        <Pressable style={styles.overlay} onPress={() => declineRef.current()}>
+            <Pressable style={styles.sheetContainer} onPress={() => declineRef.current()}>
+                <View style={contentStyle}>
 
                 <TouchableOpacity style={styles.closeBtn} onPress={onDecline}>
                     <X color="#666" size={24} />
@@ -96,17 +117,23 @@ export function RideInviteSheet({ isVisible, friendName, distance, eta, onAccept
                     </Animated.View>
                 </View>
 
-            </View>
-        </View>
+                </View>
+            </Pressable>
+        </Pressable>
     );
 }
 
 const styles = StyleSheet.create({
+    overlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0, 0, 0, 0.45)',
+        justifyContent: 'flex-end',
+        zIndex: 100,
+        elevation: 20,
+    },
     sheetContainer: {
-        position: 'absolute',
-        bottom: 0,
         width: '100%',
-        height: '45%',
+        height: '48%',
         backgroundColor: '#0a0a0a',
         borderTopLeftRadius: 30,
         borderTopRightRadius: 30,
@@ -116,8 +143,6 @@ const styles = StyleSheet.create({
         shadowOffset: { width: 0, height: -5 },
         shadowOpacity: 0.3,
         shadowRadius: 15,
-        elevation: 20,
-        zIndex: 100,
     },
     content: {
         padding: 25,

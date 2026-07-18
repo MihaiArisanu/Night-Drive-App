@@ -4,8 +4,24 @@ import { API_BASE_URL } from '@env';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { apiFetch } from '../services/api';
 import { notifySessionInvalidated } from '../services/sessionEvents';
+import { notifySocialNotificationsChanged } from '../services/socialNotificationEvents';
 
-interface InvitePayload {
+interface SpontaneousRideEvent {
+    type: 'SPONTANEOUS_RIDE_OFFER' | 'SPONTANEOUS_RIDE_RESOLVED' | 'SPONTANEOUS_RIDE_MATCHED';
+    payload: {
+        offerId: string;
+        friendId?: string;
+        friendName?: string;
+        distanceMeters?: number;
+        roadDistanceMeters?: number;
+        expiresAt?: string;
+        status?: string;
+        reason?: string;
+        groupId?: string;
+    };
+}
+
+interface GroupInvitePayload {
     inviteId: string;
     senderId?: string;
     senderName?: string;
@@ -23,14 +39,14 @@ interface WebSocketTicketResponse {
 export function useWebSocket(
     token: string | null,
     groupId: string | null,
-    onInviteReceived: (data: InvitePayload) => void
+    onSpontaneousRideEvent: (event: SpontaneousRideEvent) => void,
 ) {
     const ws = useRef<WebSocket | null>(null);
     const reconnectTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const inviteCallbackRef = useRef(onInviteReceived);
+    const spontaneousCallbackRef = useRef(onSpontaneousRideEvent);
     useEffect(() => {
-        inviteCallbackRef.current = onInviteReceived;
-    }, [onInviteReceived]);
+        spontaneousCallbackRef.current = onSpontaneousRideEvent;
+    }, [onSpontaneousRideEvent]);
 
     useEffect(() => {
         if (!token) return;
@@ -93,8 +109,8 @@ export function useWebSocket(
                             removePendingGroupInvite,
                         } = useSettingsStore.getState();
 
-                        if (message.type === 'RIDE_INVITE') {
-                            const payload = message.payload as InvitePayload;
+                        if (message.type === 'GROUP_INVITE') {
+                            const payload = message.payload as GroupInvitePayload;
                             if (payload.inviteId && payload.groupId) {
                                 addPendingGroupInvite({
                                     id: payload.inviteId,
@@ -102,8 +118,17 @@ export function useWebSocket(
                                     senderId: payload.senderId,
                                     senderName: payload.senderName || payload.friendName || 'Driver',
                                 });
+                                notifySocialNotificationsChanged();
                             }
-                            inviteCallbackRef.current(message.payload);
+                        } else if (
+                            message.type === 'SPONTANEOUS_RIDE_OFFER'
+                            || message.type === 'SPONTANEOUS_RIDE_RESOLVED'
+                            || message.type === 'SPONTANEOUS_RIDE_MATCHED'
+                        ) {
+                            spontaneousCallbackRef.current({
+                                type: message.type,
+                                payload: message.payload,
+                            });
                         } else if (message.type === 'GROUP_INVITE_ACCEPTED') {
                             const acceptedGroupId = message.payload?.groupId;
                             if (acceptedGroupId) {
@@ -151,6 +176,7 @@ export function useWebSocket(
                             const cancelledGroupId = message.payload?.groupId;
                             if (cancelledGroupId) {
                                 removePendingGroupInvite(cancelledGroupId);
+                                notifySocialNotificationsChanged();
                                 Toast.show({
                                     type: 'info',
                                     text1: 'Invitation cancelled',

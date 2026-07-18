@@ -12,6 +12,7 @@ import { useSettingsStore } from '../store/useSettingsStore';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import { apiFetch, AuthStorage } from '../services/api';
 import { GroupSnapshot } from '../services/groupSession';
+import { useSocialNotificationCount } from '../hooks/useSocialNotificationCount';
 
 export default function MenuScreen({ navigation }: any) {
   const { currentUser, refetchUser } = useCurrentUser();
@@ -25,10 +26,12 @@ export default function MenuScreen({ navigation }: any) {
   const [isTermsVisible, setIsTermsVisible] = useState(false);
   const [isLeavingGroup, setIsLeavingGroup] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const { count: socialNotificationCount, refresh: refreshSocialNotificationCount } = useSocialNotificationCount();
 
   useFocusEffect(useCallback(() => {
     refetchUser();
-  }, [refetchUser]));
+    refreshSocialNotificationCount();
+  }, [refetchUser, refreshSocialNotificationCount]));
 
   const {
     isSearching,
@@ -168,9 +171,19 @@ export default function MenuScreen({ navigation }: any) {
 
     setIsSigningOut(true);
     try {
-      await apiFetch('/auth/logout', { method: 'POST' });
-    } catch {
-      // The live location expires after 60 seconds even if the device is offline.
+      try {
+        await apiFetch('/users/fcm', {
+          method: 'PUT',
+          body: JSON.stringify({ token: '' }),
+        });
+      } catch {
+        // Token cleanup is best-effort; logout must still invalidate the session.
+      }
+      try {
+        await apiFetch('/auth/logout', { method: 'POST' });
+      } catch {
+        // The live location expires after 60 seconds even if the device is offline.
+      }
     } finally {
       await AuthStorage.clearTokens();
       setIsSigningOut(false);
@@ -243,6 +256,13 @@ export default function MenuScreen({ navigation }: any) {
               <UserPlus color="#A855F7" size={24} />
               <Text style={styles.menuItemText}>Friends</Text>
             </View>
+            {socialNotificationCount.total > 0 && (
+              <View style={styles.notificationBadge}>
+                <Text style={styles.notificationBadgeText}>
+                  {socialNotificationCount.total > 99 ? '99+' : socialNotificationCount.total}
+                </Text>
+              </View>
+            )}
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -578,6 +598,9 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     borderWidth: 1,
     borderColor: "#1A1A1A",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
   menuItemLeft: {
     flexDirection: "row",
@@ -589,6 +612,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "bold",
     letterSpacing: 1,
+  },
+  notificationBadge: {
+    minWidth: 26,
+    height: 26,
+    paddingHorizontal: 7,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#A855F7",
+  },
+  notificationBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "900",
   },
   messageTitleRow: {
     flexDirection: "row",

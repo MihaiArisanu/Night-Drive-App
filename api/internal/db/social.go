@@ -17,6 +17,7 @@ var (
 	ErrRequestAlreadyPending  = errors.New("friend request is already pending")
 	ErrIncomingRequestPending = errors.New("recipient already sent a pending request")
 	ErrRequestNotFound        = errors.New("pending friend request not found")
+	ErrFriendshipNotFound     = errors.New("friendship not found")
 )
 
 type existingFriendRequest struct {
@@ -325,4 +326,74 @@ func GetFriends(ctx context.Context, database *sql.DB, userID string) ([]models.
 		friends = []models.Friend{}
 	}
 	return friends, nil
+}
+
+// RemoveFriend serializes against friend-request creation by locking both user
+// rows in the same stable order used by SendFriendRequest. Accepted historical
+// requests are rejected so a future friendship always requires a fresh accept.
+func RemoveFriend(ctx context.Context, database *sql.DB, userID, friendID string) error {
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin remove friendship transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id
+		FROM users
+		WHERE id IN ($1, $2)
+		ORDER BY id
+		FOR UPDATE
+	`, userID, friendID)
+	if err != nil {
+		return fmt.Errorf("lock friendship users: %w", err)
+	}
+	lockedUsers := 0
+	for rows.Next() {
+		lockedUsers++
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate locked friendship users: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close locked friendship users: %w", err)
+	}
+	if lockedUsers != 2 {
+		return ErrFriendshipNotFound
+	}
+
+	firstUserID, secondUserID := userID, friendID
+	if firstUserID > secondUserID {
+		firstUserID, secondUserID = secondUserID, firstUserID
+	}
+	result, err := tx.ExecContext(ctx, `
+		DELETE FROM friendships
+		WHERE user_id_1 = $1 AND user_id_2 = $2
+	`, firstUserID, secondUserID)
+	if err != nil {
+		return fmt.Errorf("delete friendship: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read removed friendship count: %w", err)
+	}
+	if rowsAffected != 1 {
+		return ErrFriendshipNotFound
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE friend_requests
+		SET status = 'rejected', updated_at = CURRENT_TIMESTAMP
+		WHERE ((sender_id = $1 AND receiver_id = $2)
+		    OR (sender_id = $2 AND receiver_id = $1))
+		  AND status IN ('accept', 'accepted')
+	`, userID, friendID); err != nil {
+		return fmt.Errorf("close accepted friend requests: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit removed friendship: %w", err)
+	}
+	return nil
 }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { View, Text, TouchableOpacity, Keyboard, Platform, PermissionsAndroid, StyleSheet, Modal, Animated, PanResponder, Alert } from "react-native";
+import { View, Text, TouchableOpacity, Keyboard, Platform, PermissionsAndroid, StyleSheet, Modal, Animated, PanResponder, Alert, DeviceEventEmitter } from "react-native";
 import MapView, { PROVIDER_GOOGLE, Marker, Polyline } from "react-native-maps";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Search, MapPin, Navigation, Users, LocateFixed, Map, XCircle, Mic } from "lucide-react-native";
@@ -40,24 +40,29 @@ import { useDrivingFocusMode } from '../hooks/useDrivingFocusMode';
 
 import { useSettingsStore } from '../store/useSettingsStore';
 import { applyGroupSnapshot, GroupSnapshot } from '../services/groupSession';
+import { SPONTANEOUS_RIDE_PUSH_EVENT, SpontaneousRidePushPayload } from '../services/spontaneousRideEvents';
 
 const FOLLOW_CAMERA_ZOOM = 17.2;
 const IDLE_CAMERA_ZOOM = 17.8;
 
-const globalNotifiedFriends = new Set<string>();
-
 interface InviteData {
-  inviteId?: string;
-  senderId?: string;
-  friendName?: string;
-  senderName?: string;
+  offerId: string;
+  friendName: string;
   distance: string;
   eta: string;
-  groupId?: string;
-  othersCount?: number;
-  message?: string;
-  isLocalInvite?: boolean;
-  friendId?: string;
+  expiresAt: string;
+}
+
+interface SpontaneousRideEvent {
+  type: 'SPONTANEOUS_RIDE_OFFER' | 'SPONTANEOUS_RIDE_RESOLVED' | 'SPONTANEOUS_RIDE_MATCHED';
+  payload: {
+    offerId: string;
+    friendName?: string;
+    distanceMeters?: number;
+    roadDistanceMeters?: number;
+    expiresAt?: string;
+    groupId?: string;
+  };
 }
 
 class ZenRouteError extends Error {
@@ -85,13 +90,13 @@ export default function MainScreen() {
   const insets = useSafeAreaInsets();
   const mapRef = useRef<MapView>(null);
 
-  const { speed, heading, coords } = useLocation();
+  const { speed, heading, coords, accuracy } = useLocation();
   const speedMs = speed / 3.6;
   useKeepAwake();
 
   const activeCoords = coords;
 
-  const [destination, setDestination] = useState<{ latitude: number, longitude: number } | null>(null);
+  const [destination, setDestination] = useState<{ latitude: number, longitude: number, name?: string } | null>(null);
   const [stopDestination, setStopDestination] = useState<{ latitude: number, longitude: number } | null>(null);
   const [routeCoordinates, setRouteCoordinates] = useState<{ latitude: number, longitude: number }[]>([]);
   const [isNavigating, setIsNavigating] = useState(false);
@@ -114,6 +119,7 @@ export default function MainScreen() {
 
   const [showRideInvite, setShowRideInvite] = useState(false);
   const [inviteData, setInviteData] = useState<InviteData | null>(null);
+  const spontaneousRideEventRef = useRef<(event: SpontaneousRideEvent) => void>(() => undefined);
   const [isUpdatingGroupRoute, setIsUpdatingGroupRoute] = useState(false);
   const [isCancellingStop, setIsCancellingStop] = useState(false);
 
@@ -126,13 +132,11 @@ export default function MainScreen() {
     groupDestination,
     rendezvousPoint,
     groupStops,
-    setActiveGroupId,
     token,
     setGroupDestination,
     setGroupVersion,
     addGroupStop,
     removeGroupStop,
-    removePendingGroupInvite,
   } = useSettingsStore();
   const isCurrentUserGroupOwner = Boolean(activeGroupId && userId && groupOwnerId === userId);
   const { submitReport, isSubmitting } = useReporting();
@@ -241,23 +245,75 @@ export default function MainScreen() {
     extrapolate: 'clamp'
   });
 
-  const handleIncomingInvite = (data: any) => {
-    if (isDNDActive) {
+  const handleSpontaneousRideEvent = async (event: SpontaneousRideEvent) => {
+    if (event.type === 'SPONTANEOUS_RIDE_OFFER') {
+      if (isDNDActive || !event.payload.expiresAt) {
+        apiFetch(`/spontaneous-rides/${event.payload.offerId}/respond`, {
+          method: 'POST',
+          body: JSON.stringify({ decision: 'decline' }),
+        }).catch(() => undefined);
+        return;
+      }
+      const distanceMeters = event.payload.distanceMeters || 0;
+      const roadDistanceMeters = event.payload.roadDistanceMeters || distanceMeters;
+      setInviteData({
+        offerId: event.payload.offerId,
+        friendName: event.payload.friendName || 'A friend',
+        distance: distanceMeters < 1000
+          ? `${Math.round(distanceMeters)} m`
+          : `${(distanceMeters / 1000).toFixed(1)} km`,
+        eta: `${Math.max(1, Math.round(roadDistanceMeters / 500))} min`,
+        expiresAt: event.payload.expiresAt,
+      });
+      setShowRideInvite(true);
       return;
     }
-    const othersCount = data.othersCount || 0;
 
-    const name = data.senderName || data.friendName || 'a friend';
+    if (event.type === 'SPONTANEOUS_RIDE_RESOLVED') {
+      if (inviteData?.offerId === event.payload.offerId) {
+        setShowRideInvite(false);
+        setInviteData(null);
+      }
+      return;
+    }
 
-    const inviteText = othersCount > 0
-      ? `Join ${name} and ${othersCount} other riders?`
-      : `Join ${name} for a ride?`;
-
-    setInviteData({ ...data, message: inviteText });
-    setShowRideInvite(true);
+    if (event.payload.groupId) {
+      if (useSettingsStore.getState().activeGroupId === event.payload.groupId) {
+        return;
+      }
+      setShowRideInvite(false);
+      setInviteData(null);
+      try {
+        const snapshot = await apiFetch(`/groups/${event.payload.groupId}`) as GroupSnapshot;
+        applyGroupSnapshot(snapshot);
+        Toast.show({
+          type: 'success',
+          text1: 'Spontaneous ride started',
+          text2: snapshot.destination
+            ? 'Both drivers accepted. The shared destination is ready.'
+            : 'Both drivers accepted. You are now connected.',
+        });
+      } catch (error) {
+        console.error('Failed to restore spontaneous ride group:', error);
+      }
+    }
   };
+  spontaneousRideEventRef.current = handleSpontaneousRideEvent;
 
-  useWebSocket(token, activeGroupId, handleIncomingInvite);
+  useWebSocket(token, activeGroupId, handleSpontaneousRideEvent);
+
+  useEffect(() => {
+    const subscription = DeviceEventEmitter.addListener(
+      SPONTANEOUS_RIDE_PUSH_EVENT,
+      (payload: SpontaneousRidePushPayload) => {
+        spontaneousRideEventRef.current({
+          type: 'SPONTANEOUS_RIDE_OFFER',
+          payload,
+        });
+      },
+    );
+    return () => subscription.remove();
+  }, []);
 
   const handleGroupVoicePress = async () => {
     const result = await toggleTransmission();
@@ -292,7 +348,10 @@ export default function MainScreen() {
     activeCoords.longitude,
     heading,
     speedMs,
-    isDNDActive
+    accuracy,
+    isDNDActive,
+    isZenSession ? 'zen' : destination ? 'destination' : 'none',
+    destination,
   );
 
   useTelemetry(activeCoords.latitude, activeCoords.longitude, speedMs);
@@ -434,57 +493,63 @@ export default function MainScreen() {
   }, [normalPlannedRoute.error, zenPlannedRoute.error]);
 
   const handleAcceptRide = async () => {
-    if (inviteData?.isLocalInvite) {
-      if (!userName || !userId || !inviteData.friendId) {
-        setShowRideInvite(false);
-        return;
-      }
-      try {
-        const result = await sendInvite(inviteData.friendId, userName, activeCoords.latitude, activeCoords.longitude);
-        if (result.success && result.groupId) {
-          Toast.show({ type: 'info', text1: 'Invite sent', text2: 'The Group Ride starts after acceptance.' });
-        }
-      } catch (err) {
-        console.error("Failed to invite local friend:", err);
-      }
-      setShowRideInvite(false);
-      return;
-    }
-
-    if (!inviteData?.groupId) {
+    if (!inviteData?.offerId) {
       setShowRideInvite(false);
       return;
     }
 
     try {
-      const groupData = await apiFetch(`/groups/${inviteData.groupId}/join`, { method: 'POST' }) as GroupSnapshot;
-
-      if (groupData?.ownerId && groupData?.status) {
-        applyGroupSnapshot(groupData);
-      } else {
-        setActiveGroupId(inviteData.groupId);
-      }
-      removePendingGroupInvite(inviteData.inviteId || inviteData.groupId);
+      const response = await apiFetch(`/spontaneous-rides/${inviteData.offerId}/respond`, {
+        method: 'POST',
+        body: JSON.stringify({ decision: 'accept' }),
+      }) as { status: string; group?: GroupSnapshot };
       setShowRideInvite(false);
-
-      if (!groupData?.destination) {
+      setInviteData(null);
+      if (response.group) {
+        if (useSettingsStore.getState().activeGroupId !== response.group.id) {
+          applyGroupSnapshot(response.group);
+          Toast.show({
+            type: 'success',
+            text1: 'Spontaneous ride started',
+            text2: 'Your shared route is ready.',
+          });
+        }
+      } else if (response.status === 'pending') {
         Toast.show({
           type: 'info',
-          text1: 'Group Ride started',
-          text2: 'Waiting for the group owner to choose the destination.',
+          text1: 'Accepted',
+          text2: 'Waiting for your friend to swipe.',
         });
       }
-
     } catch (error) {
-      console.error("Failed to join ride:", error);
+      console.error('Failed to accept spontaneous ride:', error);
       setShowRideInvite(false);
+      setInviteData(null);
     }
   };
 
   const handleDeclineRide = () => {
+    const offerID = inviteData?.offerId;
     setShowRideInvite(false);
     setInviteData(null);
+    if (offerID) {
+      apiFetch(`/spontaneous-rides/${offerID}/respond`, {
+        method: 'POST',
+        body: JSON.stringify({ decision: 'decline' }),
+      }).catch(() => undefined);
+    }
   };
+
+  useEffect(() => {
+    if (!isDNDActive || !showRideInvite || !inviteData?.offerId) return;
+    const offerID = inviteData.offerId;
+    setShowRideInvite(false);
+    setInviteData(null);
+    apiFetch(`/spontaneous-rides/${offerID}/respond`, {
+      method: 'POST',
+      body: JSON.stringify({ decision: 'decline' }),
+    }).catch(() => undefined);
+  }, [inviteData?.offerId, isDNDActive, showRideInvite]);
 
   const handleFriendClick = async (friendId: string, _friendName: string) => {
     if (isDNDActive || !userId || !userName) {
@@ -526,36 +591,6 @@ export default function MainScreen() {
       );
     });
   }, []);
-
-  useEffect(() => {
-    if (isDNDActive || isNavigating || isZenSession || activeGroupId) return;
-    if (activeCoords.latitude === 0 || !friends || friends.length === 0) return;
-
-    friends.forEach(friend => {
-      if (globalNotifiedFriends.has(friend.id)) return;
-
-      const R = 6371;
-      const dLat = (friend.latitude - activeCoords.latitude) * Math.PI / 180;
-      const dLon = (friend.longitude - activeCoords.longitude) * Math.PI / 180;
-      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos(activeCoords.latitude * Math.PI / 180) * Math.cos(friend.latitude * Math.PI / 180) *
-        Math.sin(dLon / 2) * Math.sin(dLon / 2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      const distanceCode = R * c;
-
-      if (distanceCode < 2.0 && !showRideInvite) {
-        setInviteData({
-          isLocalInvite: true,
-          friendId: friend.id,
-          friendName: friend.name,
-          distance: distanceCode < 1 ? `${Math.round(distanceCode * 1000)} m` : `${distanceCode.toFixed(1)} km`,
-          eta: `${Math.round(distanceCode * 2)} min`
-        });
-        setShowRideInvite(true);
-        globalNotifiedFriends.add(friend.id);
-      }
-    });
-  }, [friends, activeCoords, isDNDActive, isNavigating, isZenSession, activeGroupId, showRideInvite]);
 
   useEffect(() => {
     return () => {
@@ -710,7 +745,7 @@ export default function MainScreen() {
       setPendingSearch({ coords: destCoords, name });
       setIsSearching(false);
     } else {
-      setDestination(destCoords);
+      setDestination({ ...destCoords, name });
       startNavigationProtocol();
     }
   };
@@ -752,7 +787,7 @@ export default function MainScreen() {
     }
 
     setStopDestination(null);
-    setDestination(pendingSearch.coords);
+    setDestination({ ...pendingSearch.coords, name: pendingSearch.name });
     setPendingSearch(null);
     startNavigationProtocol();
   };
@@ -1351,6 +1386,7 @@ export default function MainScreen() {
         friendName={inviteData?.friendName || ""}
         distance={inviteData?.distance || ""}
         eta={inviteData?.eta || ""}
+        expiresAt={inviteData?.expiresAt || new Date().toISOString()}
         onAccept={handleAcceptRide}
         onDecline={handleDeclineRide}
       />

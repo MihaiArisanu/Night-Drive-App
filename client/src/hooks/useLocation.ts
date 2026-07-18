@@ -4,11 +4,13 @@ import Geolocation from 'react-native-geolocation-service';
 let globalSpeed = 0;
 let globalHeading = 0;
 let globalCoords = { latitude: 0, longitude: 0 };
+let globalAccuracy = 0;
 
 export const useLocation = () => {
     const [speed, setSpeed] = useState(globalSpeed);
     const [heading, setHeading] = useState(globalHeading);
     const [coords, setCoords] = useState(globalCoords);
+    const [accuracy, setAccuracy] = useState(globalAccuracy);
 
     useEffect(() => {
         const watchId = Geolocation.watchPosition(
@@ -22,14 +24,14 @@ export const useLocation = () => {
                     latitude: position.coords.latitude,
                     longitude: position.coords.longitude,
                 };
+                globalAccuracy = position.coords.accuracy || 0;
 
                 setSpeed(globalSpeed);
                 setHeading(globalHeading);
                 setCoords(globalCoords);
+                setAccuracy(globalAccuracy);
             },
-            (error) => {
-                console.log("Eroare GPS la citire viteză:", error.code, error.message);
-            },
+            () => undefined,
             {
                 enableHighAccuracy: true,
                 distanceFilter: 2,
@@ -43,5 +45,5 @@ export const useLocation = () => {
         };
     }, []);
 
-    return { speed, heading, coords };
+    return { speed, heading, coords, accuracy };
 };

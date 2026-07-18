@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { ApiError, apiFetch } from '../services/api';
+import { notifySocialNotificationsChanged } from '../services/socialNotificationEvents';
 
 export interface Friend {
     id: string;
@@ -127,6 +128,7 @@ export const useFriendRequests = () => {
             });
 
             setPendingRequests((prev) => prev.filter((req) => req.id !== id));
+            notifySocialNotificationsChanged();
             return true;
         } catch (error) {
             console.error(`Failed to ${action} request:`, error);
@@ -169,5 +171,10 @@ export const useAllFriends = () => {
         fetchFriends();
     }, [fetchFriends]);
 
-    return { friends, isLoading, refetchFriends: fetchFriends };
+    const removeFriend = useCallback(async (friendId: string) => {
+        await apiFetch(`/friends/${encodeURIComponent(friendId)}`, { method: 'DELETE' });
+        setFriends((current) => current.filter((friend) => friend.id !== friendId));
+    }, []);
+
+    return { friends, isLoading, refetchFriends: fetchFriends, removeFriend };
 };

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/MihaiArisanu/nightdrive-backend/internal/db"
 )
@@ -26,8 +27,14 @@ func UpdateFCMTokenHandler(database *sql.DB) http.HandlerFunc {
 		}
 
 		var req FCMTokenRequest
+		r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			RespondWithError(w, http.StatusBadRequest, "bad_request", "Invalid request body", nil)
+			return
+		}
+		req.Token = strings.TrimSpace(req.Token)
+		if len(req.Token) > 4096 {
+			RespondWithError(w, http.StatusBadRequest, "invalid_fcm_token", "Invalid notification token", nil)
 			return
 		}
 
@@ -37,6 +44,8 @@ func UpdateFCMTokenHandler(database *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]string{"status": "success"})
 	}

@@ -442,6 +442,101 @@ func GetCurrentRideGroupID(ctx context.Context, dbConn *sql.DB, userID string) (
 	return groupID, nil
 }
 
+// CloseAbandonedDraftGroupForUser repairs the lifecycle edge case where a
+// planned group contains only its owner after every invitation was declined or
+// expired. Such a draft is not a real ride and must not reserve the owner or
+// prevent a spontaneous match forever.
+func CloseAbandonedDraftGroupForUser(ctx context.Context, dbConn *sql.DB, userID string) (string, error) {
+	tx, err := dbConn.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("begin abandoned draft cleanup: %w", err)
+	}
+	defer tx.Rollback()
+
+	var groupID string
+	err = tx.QueryRowContext(ctx, `
+		SELECT ride_group.id
+		FROM ride_groups ride_group
+		JOIN ride_group_members membership
+		  ON membership.group_id = ride_group.id
+		 AND membership.user_id = $1
+		 AND membership.status = 'active'
+		WHERE ride_group.owner_id = $1
+		  AND ride_group.status = 'draft'
+		ORDER BY membership.joined_at
+		LIMIT 1
+		FOR UPDATE OF ride_group
+	`, userID).Scan(&groupID)
+	if errors.Is(err, sql.ErrNoRows) {
+		if err := tx.Commit(); err != nil {
+			return "", fmt.Errorf("commit empty abandoned draft cleanup: %w", err)
+		}
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("lock draft ride group: %w", err)
+	}
+
+	var activeMemberCount int
+	var hasPendingInvite bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM ride_group_members
+		WHERE group_id = $1 AND status = 'active'
+	`, groupID).Scan(&activeMemberCount); err != nil {
+		return "", fmt.Errorf("count draft ride group members: %w", err)
+	}
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM ride_group_invites
+			WHERE group_id = $1
+			  AND status = 'pending'
+			  AND expires_at > CURRENT_TIMESTAMP
+		)
+	`, groupID).Scan(&hasPendingInvite); err != nil {
+		return "", fmt.Errorf("check draft ride group invitations: %w", err)
+	}
+	if activeMemberCount != 1 || hasPendingInvite {
+		if err := tx.Commit(); err != nil {
+			return "", fmt.Errorf("commit retained draft ride group: %w", err)
+		}
+		return "", nil
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE ride_group_invites
+		SET status = CASE
+				WHEN expires_at <= CURRENT_TIMESTAMP THEN 'expired'
+				ELSE 'cancelled'
+			END,
+			responded_at = COALESCE(responded_at, CURRENT_TIMESTAMP)
+		WHERE group_id = $1 AND status = 'pending'
+	`, groupID); err != nil {
+		return "", fmt.Errorf("resolve abandoned draft invitations: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE ride_group_members
+		SET status = 'left', left_at = CURRENT_TIMESTAMP
+		WHERE group_id = $1 AND status = 'active'
+	`, groupID); err != nil {
+		return "", fmt.Errorf("release abandoned draft membership: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE ride_groups
+		SET status = 'closed', closed_at = CURRENT_TIMESTAMP,
+		    updated_at = CURRENT_TIMESTAMP, version = version + 1
+		WHERE id = $1
+	`, groupID); err != nil {
+		return "", fmt.Errorf("close abandoned draft ride group: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("commit abandoned draft cleanup: %w", err)
+	}
+	return groupID, nil
+}
+
 func LeaveRideGroup(ctx context.Context, dbConn *sql.DB, groupID, userID string) (LeaveRideGroupResult, error) {
 	tx, err := dbConn.BeginTx(ctx, nil)
 	if err != nil {
