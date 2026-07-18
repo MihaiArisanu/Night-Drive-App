@@ -217,12 +217,3 @@ NightDrive's application-specific source is implemented in this repository. The 
 - **Python libraries** declared in `zen-engine/requirements.txt`, including FastAPI, asyncpg, scikit-learn, NumPy, HTTPX, Redis, and Uvicorn.
 
 All third-party components remain subject to their own licenses and terms. API keys, passwords, service-account files, signing keys, and `.env` files must not be committed.
-
-## Project documentation
-
-- [`NightDrive_MVP_Documentatie_5_pagini.pdf`](output/pdf/NightDrive_MVP_Documentatie_5_pagini.pdf) - five-page executive documentation, including the product roadmap;
-- [`NightDrive_Manual_Explicativ_Complet.pdf`](output/pdf/NightDrive_Manual_Explicativ_Complet.pdf) - personal technical manual explaining the architecture, terminology, end-to-end flows, and every relevant project file.
-
-## Author
-
-NightDrive is designed and developed by **Mihai Arisanu**.
